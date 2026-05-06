@@ -647,6 +647,78 @@ def send_campaign_alerts(df: pd.DataFrame) -> None:
                 print(f"[alerta] erro ao enviar {atype} para {to}: {exc}")
 
 
+# ── Per-client report dispatch ────────────────────────────────────────────────
+
+def _get_client_recipients() -> dict[str, list[str]]:
+    """Returns {client_name: [email, ...]} from report_recipients + users tables."""
+    result: dict[str, list[str]] = {}
+    with _db() as conn:
+        with conn.cursor() as cur:
+            # Explicit recipients from report_recipients table
+            cur.execute(
+                "SELECT client_name, email FROM report_recipients WHERE active=true ORDER BY client_name, email"
+            )
+            for client_name, email in cur.fetchall():
+                result.setdefault(client_name, [])
+                if email not in result[client_name]:
+                    result[client_name].append(email)
+
+            # Users with email + client access
+            cur.execute("""
+                SELECT uca.client_name, u.email
+                FROM user_client_access uca
+                JOIN users u ON u.username = uca.username
+                WHERE u.email <> '' AND u.email IS NOT NULL
+                ORDER BY uca.client_name, u.email
+            """)
+            for client_name, email in cur.fetchall():
+                result.setdefault(client_name, [])
+                if email not in result[client_name]:
+                    result[client_name].append(email)
+    return result
+
+
+def send_client_reports(df: pd.DataFrame, no_data: list) -> None:
+    """Sends a filtered report to each client's recipients."""
+    if "client_name" not in df.columns:
+        return
+
+    recipients_by_client = _get_client_recipients()
+    if not recipients_by_client:
+        print("[report-cliente] Nenhum destinatário por cliente configurado.")
+        return
+
+    host     = os.environ["SMTP_HOST"]
+    port     = int(os.environ.get("SMTP_PORT", "587"))
+    user     = os.environ["SMTP_USER"]
+    password = os.environ["SMTP_PASS"]
+    from_    = os.environ.get("REPORT_FROM", user)
+    today_str = datetime.now().strftime("%d/%m/%Y")
+
+    for client_name, emails in recipients_by_client.items():
+        client_df = df[df["client_name"] == client_name]
+        if client_df.empty:
+            print(f"[report-cliente] Sem dados para '{client_name}', pulando.")
+            continue
+
+        client_no_data = [c for c in no_data if c.get("client_name") == client_name]
+        html = build_html(client_df, client_no_data)
+
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = f"📊 Relatório de Campanhas — {client_name} — {today_str}"
+        msg["From"]    = from_
+        msg["To"]      = ", ".join(emails)
+        msg.attach(MIMEText(html, "html", "utf-8"))
+
+        try:
+            with smtplib.SMTP(host, port) as srv:
+                srv.ehlo(); srv.starttls(); srv.login(user, password)
+                srv.sendmail(from_, emails, msg.as_string())
+            print(f"[report-cliente] '{client_name}' enviado para: {', '.join(emails)}")
+        except Exception as exc:
+            print(f"[report-cliente] Erro ao enviar para '{client_name}': {exc}")
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -669,6 +741,7 @@ def main() -> None:
     html = build_html(df, no_data)
     send_email(html)
     send_campaign_alerts(df)
+    send_client_reports(df, no_data)
 
 
 if __name__ == "__main__":

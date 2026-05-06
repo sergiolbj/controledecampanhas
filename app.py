@@ -20,6 +20,7 @@ from auth import (
     get_alert_configs, save_alert_config, update_alert_config, delete_alert_config,
     get_mapping_coverage, clear_campaign_data, restore_ingestion_from_log,
     change_own_password, archive_campaign,
+    get_report_recipients, add_report_recipient, toggle_report_recipient, delete_report_recipient,
 )
 
 COOKIE_NAME = "adops_session"
@@ -2655,10 +2656,11 @@ def main() -> None:
             new_uname = nu1.text_input("Usuário", key="nu_name")
             new_pw    = nu2.text_input("Senha",   key="nu_pw",   type="password")
             new_role  = nu3.selectbox("Perfil",   ["viewer", "editor", "admin"], key="nu_role")
+            new_email = st.text_input("E-mail (para receber relatórios)", key="nu_email", placeholder="usuario@exemplo.com")
             if st.button("Criar usuário", type="primary", key="nu_create"):
                 if new_uname.strip() and new_pw.strip():
                     try:
-                        add_user(new_uname.strip(), new_pw.strip(), new_role)
+                        add_user(new_uname.strip(), new_pw.strip(), new_role, email=new_email.strip())
                         st.success(f"Usuário **{new_uname}** criado.")
                         st.rerun()
                     except Exception as e:
@@ -2677,7 +2679,9 @@ def main() -> None:
             urole = u["role"]
             is_self = uname == username
 
-            with st.expander(f"{'🔑' if urole == 'admin' else '👤'} **{uname}**  ·  `{urole.upper()}`", expanded=False):
+            _uemail = u.get("email", "")
+            _email_tag = f"  ·  ✉️ {_uemail}" if _uemail else ""
+            with st.expander(f"{'🔑' if urole == 'admin' else '👤'} **{uname}**  ·  `{urole.upper()}`{_email_tag}", expanded=False):
                 ec1, ec2 = st.columns(2)
 
                 # Editar perfil e senha
@@ -2693,12 +2697,17 @@ def main() -> None:
                         "Nova senha (deixe em branco para não alterar)",
                         type="password", key=f"eu_pw_{uname}",
                     )
+                    new_email_val = st.text_input(
+                        "E-mail", value=_uemail, key=f"eu_email_{uname}",
+                        placeholder="usuario@exemplo.com",
+                    )
                     bc1, bc2 = st.columns(2)
                     if bc1.button("💾 Salvar", key=f"eu_save_{uname}"):
                         update_user(
                             uname,
                             new_password=new_pw_val.strip() or None,
                             new_role=new_role_sel if not is_self else None,
+                            new_email=new_email_val.strip(),
                         )
                         st.success("Usuário atualizado.")
                         st.rerun()
@@ -2729,6 +2738,53 @@ def main() -> None:
                             st.info("Nenhum cliente cadastrado no Gerenciador de Clientes.")
                     else:
                         st.caption("Admins visualizam todas as campanhas independente do cliente.")
+
+        # ── Destinatários do relatório diário ─────────────────────────────────
+        if role == "admin":
+            st.divider()
+            st.subheader("📧 Destinatários do Relatório Diário")
+            st.caption(
+                "Configure quais e-mails recebem o relatório por cliente. "
+                "Usuários com e-mail cadastrado e cliente associado também recebem automaticamente."
+            )
+
+            _rr_clients = get_clients()
+            if not _rr_clients:
+                st.info("Nenhum cliente cadastrado.")
+            else:
+                _rr_sel_client = st.selectbox(
+                    "Filtrar por cliente", ["— todos —"] + _rr_clients, key="rr_client_filter"
+                )
+                _rr_list = get_report_recipients(
+                    None if _rr_sel_client == "— todos —" else _rr_sel_client
+                )
+
+                if _rr_list:
+                    for _rr in _rr_list:
+                        _rc1, _rc2, _rc3 = st.columns([4, 1, 1])
+                        _rc1.write(f"**{_rr['email']}**  ·  `{_rr['client_name']}`")
+                        _active_label = "✅ Ativo" if _rr["active"] else "⏸ Pausado"
+                        if _rc2.button(_active_label, key=f"rr_tog_{_rr['id']}"):
+                            toggle_report_recipient(_rr["id"], not _rr["active"])
+                            st.rerun()
+                        if _rc3.button("🗑", key=f"rr_del_{_rr['id']}", help="Remover destinatário"):
+                            delete_report_recipient(_rr["id"])
+                            st.rerun()
+                else:
+                    st.caption("Nenhum destinatário cadastrado para este filtro.")
+
+                st.markdown("**Adicionar destinatário**")
+                _ra1, _ra2, _ra3 = st.columns([2, 3, 1])
+                _rr_new_client = _ra1.selectbox("Cliente", _rr_clients, key="rr_new_client")
+                _rr_new_email  = _ra2.text_input("E-mail", key="rr_new_email", placeholder="destinatario@exemplo.com")
+                _ra3.write(""); _ra3.write("")
+                if _ra3.button("➕ Add", key="rr_add"):
+                    if _rr_new_email.strip():
+                        add_report_recipient(_rr_new_client, _rr_new_email.strip())
+                        st.success(f"Adicionado: {_rr_new_email}")
+                        st.rerun()
+                    else:
+                        st.warning("Informe um e-mail.")
 
 
 if __name__ == "__main__":

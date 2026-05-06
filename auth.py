@@ -131,6 +131,16 @@ def init_db() -> None:
                 );
             """)
             cur.execute("""
+                CREATE TABLE IF NOT EXISTS report_recipients (
+                    id          SERIAL PRIMARY KEY,
+                    client_name TEXT NOT NULL,
+                    email       TEXT NOT NULL,
+                    active      BOOLEAN NOT NULL DEFAULT true,
+                    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(client_name, email)
+                )
+            """)
+            cur.execute("""
                 ALTER TABLE ingestion_cache
                 ADD COLUMN IF NOT EXISTS updated_by TEXT NOT NULL DEFAULT ''
             """)
@@ -145,6 +155,10 @@ def init_db() -> None:
             cur.execute("""
                 ALTER TABLE ingestion_log
                 ADD COLUMN IF NOT EXISTS mapping_json TEXT NOT NULL DEFAULT '{}'
+            """)
+            cur.execute("""
+                ALTER TABLE users
+                ADD COLUMN IF NOT EXISTS email TEXT NOT NULL DEFAULT ''
             """)
             
             cur.execute("""
@@ -405,23 +419,24 @@ def get_users() -> list[dict]:
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT username, role FROM users ORDER BY username"
+                "SELECT username, role, COALESCE(email,'') FROM users ORDER BY username"
             )
             rows = cur.fetchall()
-    return [{"username": r[0], "role": r[1]} for r in rows]
+    return [{"username": r[0], "role": r[1], "email": r[2]} for r in rows]
 
 
-def add_user(username: str, password: str, role: str) -> None:
+def add_user(username: str, password: str, role: str, email: str = "") -> None:
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "INSERT INTO users (username, password_hash, role) VALUES (%s,%s,%s)",
-                (username.strip(), _hash(password), role),
+                "INSERT INTO users (username, password_hash, role, email) VALUES (%s,%s,%s,%s)",
+                (username.strip(), _hash(password), role, email.strip()),
             )
     st.cache_data.clear()
 
 
-def update_user(username: str, new_password: str | None = None, new_role: str | None = None) -> None:
+def update_user(username: str, new_password: str | None = None,
+                new_role: str | None = None, new_email: str | None = None) -> None:
     with get_db() as conn:
         with conn.cursor() as cur:
             if new_password:
@@ -431,6 +446,8 @@ def update_user(username: str, new_password: str | None = None, new_role: str | 
                 )
             if new_role:
                 cur.execute("UPDATE users SET role=%s WHERE username=%s", (new_role, username))
+            if new_email is not None:
+                cur.execute("UPDATE users SET email=%s WHERE username=%s", (new_email.strip(), username))
     st.cache_data.clear()
 
 
@@ -438,6 +455,51 @@ def delete_user(username: str) -> None:
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute("DELETE FROM users WHERE username=%s", (username,))
+    st.cache_data.clear()
+
+
+# ── Report recipients ─────────────────────────────────────────────────────────
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_report_recipients(client_name: str | None = None) -> list[dict]:
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            if client_name:
+                cur.execute(
+                    "SELECT id, client_name, email, active FROM report_recipients "
+                    "WHERE client_name=%s ORDER BY email",
+                    (client_name,),
+                )
+            else:
+                cur.execute(
+                    "SELECT id, client_name, email, active FROM report_recipients ORDER BY client_name, email"
+                )
+            rows = cur.fetchall()
+    return [{"id": r[0], "client_name": r[1], "email": r[2], "active": r[3]} for r in rows]
+
+
+def add_report_recipient(client_name: str, email: str) -> None:
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO report_recipients (client_name, email) VALUES (%s,%s) "
+                "ON CONFLICT (client_name, email) DO UPDATE SET active=true",
+                (client_name.strip(), email.strip()),
+            )
+    st.cache_data.clear()
+
+
+def toggle_report_recipient(recipient_id: int, active: bool) -> None:
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE report_recipients SET active=%s WHERE id=%s", (active, recipient_id))
+    st.cache_data.clear()
+
+
+def delete_report_recipient(recipient_id: int) -> None:
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM report_recipients WHERE id=%s", (recipient_id,))
     st.cache_data.clear()
 
 
