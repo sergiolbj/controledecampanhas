@@ -74,20 +74,49 @@ def load_plan(campaign_id: int, vehicle_id: int) -> pd.DataFrame | None:
 # ── Data assembly ─────────────────────────────────────────────────────────────
 
 def gather_plan_data() -> pd.DataFrame:
+    camps = get_all_campaigns()
+    print(f"[diagnóstico] campanhas encontradas: {len(camps)}")
+
     frames = []
-    for camp in get_all_campaigns():
-        for v in get_vehicles(camp["id"]):
+    for camp in camps:
+        vehs = get_vehicles(camp["id"])
+        print(f"  campanha '{camp['name']}' — {len(vehs)} veículo(s)")
+        for v in vehs:
             df = load_plan(camp["id"], v["id"])
             if df is None or df.empty:
+                print(f"    [{v['name']}] sem plano no banco")
                 continue
+            print(f"    [{v['name']}] {len(df)} linhas | colunas: {list(df.columns)}")
             df = df.copy()
             df["sys_campaign"] = camp["name"]
             df["sys_vehicle"]  = v["name"]
             df["sys_client"]   = camp["client"]
             frames.append(df)
+
     if not frames:
         return pd.DataFrame()
-    return pd.concat(frames, ignore_index=True)
+
+    result = pd.concat(frames, ignore_index=True)
+    print(f"[diagnóstico] total de linhas: {len(result)}")
+    return result
+
+
+# Common alternative names for date columns (user may have mapped differently)
+_DATE_ALIASES = {
+    "start_date": ["start_date", "data_inicio", "data inicio", "inicio", "data_de_inicio",
+                   "start", "flight_start", "data_começo"],
+    "end_date":   ["end_date",   "data_fim",    "data fim",    "fim",    "data_de_fim",
+                   "end",   "flight_end",   "data_termino", "data_encerramento"],
+}
+
+
+def _find_date_col(df: pd.DataFrame, canonical: str) -> str | None:
+    """Return the actual column name for a canonical date field, or None."""
+    cols_lower = {c.lower().strip().replace(" ", "_"): c for c in df.columns}
+    for alias in _DATE_ALIASES[canonical]:
+        if alias in cols_lower:
+            return cols_lower[alias]
+    return None
 
 
 def compute_status(df: pd.DataFrame) -> pd.DataFrame:
@@ -95,11 +124,21 @@ def compute_status(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     today = pd.Timestamp.now().normalize()
 
+    for canonical in ("start_date", "end_date"):
+        actual = _find_date_col(df, canonical)
+        if actual and actual != canonical:
+            # rename alias to canonical so the rest of the code is uniform
+            df = df.rename(columns={actual: canonical})
+            print(f"[diagnóstico] coluna '{actual}' mapeada como '{canonical}'")
+
     for col in ("start_date", "end_date"):
         if col in df.columns:
             df[col] = pd.to_datetime(df[col], errors="coerce")
+            valid = df[col].notna().sum()
+            print(f"[diagnóstico] {col}: {valid}/{len(df)} valores válidos")
         else:
             df[col] = pd.NaT
+            print(f"[diagnóstico] {col}: coluna ausente — atribuída NaT")
 
     def _row(r):
         ini, fim = r["start_date"], r["end_date"]
@@ -382,6 +421,8 @@ def main() -> None:
     raw = deduplicate(raw)
     df  = compute_status(raw)
 
+    status_counts = df["_status"].value_counts().to_dict()
+    print(f"[diagnóstico] status após compute_status: {status_counts}")
     print(f"{len(df)} criativos processados.")
 
     html = build_html(df)
