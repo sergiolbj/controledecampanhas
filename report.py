@@ -73,11 +73,17 @@ def load_plan(campaign_id: int, vehicle_id: int) -> pd.DataFrame | None:
 
 # ── Data assembly ─────────────────────────────────────────────────────────────
 
-def gather_plan_data() -> pd.DataFrame:
+def gather_plan_data() -> tuple[pd.DataFrame, list[dict]]:
+    """Return (all_plan_rows, no_data_items).
+
+    no_data_items: list of {campaign, vehicle} that have no plan in the DB.
+    """
     camps = get_all_campaigns()
     print(f"[diagnóstico] campanhas encontradas: {len(camps)}")
 
-    frames = []
+    frames: list[pd.DataFrame] = []
+    no_data: list[dict] = []
+
     for camp in camps:
         vehs = get_vehicles(camp["id"])
         print(f"  campanha '{camp['name']}' — {len(vehs)} veículo(s)")
@@ -85,8 +91,11 @@ def gather_plan_data() -> pd.DataFrame:
             df = load_plan(camp["id"], v["id"])
             if df is None or df.empty:
                 print(f"    [{v['name']}] sem plano no banco")
+                no_data.append({"sys_client": camp["client"],
+                                "sys_campaign": camp["name"],
+                                "sys_vehicle": v["name"]})
                 continue
-            print(f"    [{v['name']}] {len(df)} linhas | colunas: {list(df.columns)}")
+            print(f"    [{v['name']}] {len(df)} linhas | colunas: {list(df.columns)[:10]}")
             df = df.copy()
             df["sys_campaign"] = camp["name"]
             df["sys_vehicle"]  = v["name"]
@@ -94,11 +103,11 @@ def gather_plan_data() -> pd.DataFrame:
             frames.append(df)
 
     if not frames:
-        return pd.DataFrame()
+        return pd.DataFrame(), no_data
 
     result = pd.concat(frames, ignore_index=True)
     print(f"[diagnóstico] total de linhas: {len(result)}")
-    return result
+    return result, no_data
 
 
 # Common alternative names for date columns (user may have mapped differently)
@@ -311,16 +320,57 @@ PLAN_COLS = [
 ]
 
 
-def build_html(df: pd.DataFrame) -> str:
+def _no_data_section(items: list[dict]) -> str:
+    """Renders a warning section for vehicles with no plan in the DB."""
+    if not items:
+        return ""
+    rows_html = ""
+    for i, it in enumerate(items):
+        bg = "#fff7ed" if i % 2 == 0 else "#fff"
+        rows_html += (
+            f'<tr style="background:{bg}">'
+            f'<td style="padding:6px 10px;font-size:12px;color:#1e293b;border-bottom:1px solid #fef3c7">'
+            f'{it.get("sys_client") or "—"}</td>'
+            f'<td style="padding:6px 10px;font-size:12px;color:#1e293b;border-bottom:1px solid #fef3c7">'
+            f'{it["sys_campaign"]}</td>'
+            f'<td style="padding:6px 10px;font-size:12px;color:#1e293b;border-bottom:1px solid #fef3c7">'
+            f'{it["sys_vehicle"]}</td>'
+            f'</tr>'
+        )
+    table = (
+        '<table style="width:100%;border-collapse:collapse">'
+        '<thead><tr>'
+        '<th style="text-align:left;padding:6px 10px;font-size:12px;color:#92400e;font-weight:600;border-bottom:1px solid #fde68a">Cliente</th>'
+        '<th style="text-align:left;padding:6px 10px;font-size:12px;color:#92400e;font-weight:600;border-bottom:1px solid #fde68a">Campanha</th>'
+        '<th style="text-align:left;padding:6px 10px;font-size:12px;color:#92400e;font-weight:600;border-bottom:1px solid #fde68a">Veículo</th>'
+        f'</tr></thead><tbody>{rows_html}</tbody></table>'
+    )
+    return (
+        f'<div style="margin:0 0 20px;border-radius:8px;overflow:hidden;border:1px solid #fde68a">'
+        f'<div style="background:#fef3c7;padding:10px 16px;display:flex;align-items:center;justify-content:space-between">'
+        f'<div><span style="font-size:14px;font-weight:700;color:#92400e">⚠️ Sem dados no banco</span>'
+        f'<span style="font-size:12px;color:#92400e;opacity:.7;margin-left:8px">Mapeamento & Cruzamento pendente</span>'
+        f'</div>'
+        f'<span style="background:#92400e;color:white;border-radius:12px;padding:2px 10px;font-size:12px;font-weight:700">{len(items)}</span>'
+        f'</div>'
+        f'<div style="padding:12px 16px;background:#fffbeb">{table}</div>'
+        f'</div>'
+    )
+
+
+def build_html(df: pd.DataFrame, no_data: list[dict] | None = None) -> str:
     today_str = datetime.now().strftime("%d/%m/%Y")
-    today     = pd.Timestamp.now().normalize()
+
+    if df.empty or "_status" not in df.columns:
+        df = pd.DataFrame(columns=["_status", "_dias"])
 
     active   = df[df["_status"] == "▶️ Em veiculação"].copy()
     ending   = active[active["_dias"].notna() & (active["_dias"] <= 7)].copy()
     ending   = ending.sort_values("_dias")
     upcoming = df[(df["_status"] == "📅 Aguardando início") & (df["_dias"] <= 7)].copy()
     upcoming = upcoming.sort_values("_dias")
-    ended    = df[(df["_status"] == "🏁 Encerrada") & (df["_dias"] >= -7)].copy()
+    # 30-day window for recently ended
+    ended    = df[(df["_status"] == "🏁 Encerrada") & (df["_dias"] >= -30)].copy()
     ended    = ended.sort_values("_dias", ascending=False)
 
     n_active   = len(active)
@@ -334,7 +384,7 @@ def build_html(df: pd.DataFrame) -> str:
         + _summary_pill("Em veiculação", n_active, "#dcfce7")
         + _summary_pill("Encerrando (7d)", n_ending, "#fef3c7")
         + _summary_pill("Iniciando (7d)", n_upcoming, "#dbeafe")
-        + _summary_pill("Encerrados (7d)", n_ended, "#f1f5f9")
+        + _summary_pill("Encerrados (30d)", n_ended, "#f1f5f9")
         + '</div>'
     )
 
@@ -346,8 +396,9 @@ def build_html(df: pd.DataFrame) -> str:
                    ending, PLAN_COLS, *sc["ending"], days_col=True)
         + _section("📅 Iniciando nos próximos 7 dias", "novos criativos",
                    upcoming, PLAN_COLS, *sc["upcoming"], days_col=True)
-        + _section("🏁 Encerrados recentemente", "últimos 7 dias",
+        + _section("🏁 Encerrados recentemente", "últimos 30 dias",
                    ended, PLAN_COLS, *sc["ended"], days_col=True)
+        + _no_data_section(no_data or [])
     )
 
     return f"""<!DOCTYPE html>
@@ -412,11 +463,13 @@ def send_email(html: str) -> None:
 
 def main() -> None:
     print("Coletando dados do banco...")
-    raw = gather_plan_data()
+    raw, no_data = gather_plan_data()
 
     if raw.empty:
-        print("Nenhum dado encontrado no banco. Abortando.")
-        sys.exit(0)
+        print("Nenhum plano encontrado — apenas a seção 'Sem dados' será enviada.")
+        html = build_html(pd.DataFrame(), no_data)
+        send_email(html)
+        return
 
     raw = deduplicate(raw)
     df  = compute_status(raw)
@@ -425,7 +478,7 @@ def main() -> None:
     print(f"[diagnóstico] status após compute_status: {status_counts}")
     print(f"{len(df)} criativos processados.")
 
-    html = build_html(df)
+    html = build_html(df, no_data)
     send_email(html)
 
 
