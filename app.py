@@ -923,7 +923,32 @@ def main() -> None:
                 st.warning("Nenhuma campanha disponível para o seu perfil.")
                 return
 
-            with st.spinner("Carregando dados de todas as campanhas..."):
+            def _load_veh_df(camp_id_loop, veh_id, veh_name, camp_name, dtype):
+                """Load df for a vehicle: re-fetch from Sheets if configured, else from DB."""
+                df, mapping, _, src_info, cfg = load_ingestion(camp_id_loop, veh_id, dtype)
+                if cfg and cfg.get("src") == "Link (Google Sheets / Office 365)":
+                    try:
+                        from data_processor import read_file, apply_mapping, normalize_dates
+                        fresh = read_file("url", url=cfg["url"], sheet_name=cfg.get("sheet", 0), header_row=cfg.get("header_row", 0))
+                        if dtype == "plan":
+                            veh_col    = cfg.get("veh_col", "(não usar)")
+                            veh_filter = cfg.get("veh_filter", "")
+                            if veh_col != "(não usar)" and veh_filter.strip():
+                                fresh = fresh[fresh[veh_col].astype(str).str.strip().str.lower() == veh_filter.strip().lower()].copy()
+                            if veh_col != "(não usar)" and veh_col in fresh.columns:
+                                fresh = fresh.rename(columns={veh_col: "vehicle"})
+                            active = {k: v for k, v in mapping.items() if v != "(não mapear)"}
+                            fresh = normalize_dates(apply_mapping(fresh, active), ["start_date", "end_date"])
+                        else:
+                            active = {k: v for k, v in mapping.items() if v != "(não mapear)"}
+                            fresh = apply_mapping(fresh, active)
+                        save_ingestion(camp_id_loop, veh_id, dtype, fresh, mapping, src_info, __import__("json").dumps(cfg))
+                        df = fresh
+                    except Exception:
+                        pass  # fallback to cached DB data
+                return df, mapping, src_info, cfg
+
+            with st.spinner("Sincronizando e carregando todas as campanhas..."):
                 all_plan_dfs = []
                 all_assets_dfs = []
                 all_plan_configs = []
@@ -934,8 +959,8 @@ def main() -> None:
                     vehs = get_vehicles(camp_id_loop)
                     for v in vehs:
                         veh_id = v["id"]
-                        plan_df_c, pm, _, p_src, p_cfg = load_ingestion(camp_id_loop, veh_id, "plan")
-                        assets_df_c, am, _, a_src, a_cfg = load_ingestion(camp_id_loop, veh_id, "assets")
+                        plan_df_c, pm, p_src, p_cfg = _load_veh_df(camp_id_loop, v["id"], v["name"], camp["name"], "plan")
+                        assets_df_c, am, a_src, a_cfg = _load_veh_df(camp_id_loop, v["id"], v["name"], camp["name"], "assets")
 
                         if plan_df_c is not None:
                             if "vehicle" not in plan_df_c.columns:
@@ -987,18 +1012,24 @@ def main() -> None:
 
         camp_id = st.session_state.get("cfg_campaign_id")
 
-        camp_sys_name = ""
-        client_name = ""
         if camp_id:
-            camps = get_campaigns(username, role)
-            for c in camps:
+            # single-campaign mode: stamp sys_campaign / sys_client
+            camps_meta = get_campaigns(username, role)
+            camp_sys_name = ""
+            client_name = ""
+            for c in camps_meta:
                 if c["id"] == camp_id:
                     camp_sys_name = c["name"]
                     client_name = c.get("client_name", "")
                     break
-        
-        base["sys_client"] = client_name
-        base["sys_campaign"] = camp_sys_name
+            base["sys_client"]   = client_name
+            base["sys_campaign"] = camp_sys_name
+        else:
+            # all-campaigns mode: derive per-row from campaign_name if sys_campaign absent
+            if "sys_campaign" not in base.columns:
+                base["sys_campaign"] = base["campaign_name"] if "campaign_name" in base.columns else ""
+            if "sys_client" not in base.columns:
+                base["sys_client"] = ""
 
         # ── Filters ───────────────────────────────────────────────────────────
         with st.expander("🔽 Filtros", expanded=True):
