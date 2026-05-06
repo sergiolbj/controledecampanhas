@@ -869,8 +869,7 @@ def main() -> None:
                                 if not cfg or cfg.get("src") != "Link (Google Sheets / Office 365)":
                                     df, _, _, _, _ = load_ingestion(c_id, veh_id, dtype)
                                     if df is not None:
-                                        if "vehicle" not in df.columns:
-                                            df["vehicle"] = veh_name
+                                        df["vehicle"] = veh_name
                                         all_dfs.append(df)
                                     new_configs.append(c_dict)
                                     continue
@@ -883,15 +882,14 @@ def main() -> None:
                                     if veh_col != "(não usar)" and veh_filter.strip():
                                         df = df[df[veh_col].astype(str).str.strip().str.lower() == veh_filter.strip().lower()].copy()
                                     if veh_col != "(não usar)" and veh_col in df.columns:
-                                        df = df.rename(columns={veh_col: "vehicle"})
+                                        df = df.drop(columns=[veh_col])
                                     active = {k: v for k, v in mapping.items() if v != "(não mapear)"}
                                     df = normalize_dates(apply_mapping(df, active), ["start_date", "end_date"])
                                 else:
                                     active = {k: v for k, v in mapping.items() if v != "(não mapear)"}
                                     df = apply_mapping(df, active)
 
-                                if "vehicle" not in df.columns:
-                                    df["vehicle"] = veh_name
+                                df["vehicle"] = veh_name
 
                                 save_ingestion(c_id, veh_id, dtype, df, mapping, src_info, json.dumps(cfg))
                                 all_dfs.append(df)
@@ -935,17 +933,22 @@ def main() -> None:
                             veh_filter = cfg.get("veh_filter", "")
                             if veh_col != "(não usar)" and veh_filter.strip():
                                 fresh = fresh[fresh[veh_col].astype(str).str.strip().str.lower() == veh_filter.strip().lower()].copy()
+                            # Drop raw veh_col to avoid conflicts with the canonical vehicle column
                             if veh_col != "(não usar)" and veh_col in fresh.columns:
-                                fresh = fresh.rename(columns={veh_col: "vehicle"})
+                                fresh = fresh.drop(columns=[veh_col])
                             active = {k: v for k, v in mapping.items() if v != "(não mapear)"}
                             fresh = normalize_dates(apply_mapping(fresh, active), ["start_date", "end_date"])
                         else:
                             active = {k: v for k, v in mapping.items() if v != "(não mapear)"}
                             fresh = apply_mapping(fresh, active)
+                        # Always stamp with the canonical vehicle name from DB
+                        fresh["vehicle"] = veh_name
                         save_ingestion(camp_id_loop, veh_id, dtype, fresh, mapping, src_info, __import__("json").dumps(cfg))
                         df = fresh
                     except Exception:
                         pass  # fallback to cached DB data
+                if df is not None:
+                    df["vehicle"] = veh_name  # enforce canonical name on cached data too
                 return df, mapping, src_info, cfg
 
             with st.spinner("Sincronizando e carregando todas as campanhas..."):
