@@ -1981,18 +1981,86 @@ def main() -> None:
                 st.markdown(
                     "<p style='color:#f0883e;font-size:0.9em'>"
                     "Os veículos abaixo constam no controle de campanhas mas ainda não foram cadastrados "
-                    "no módulo de <b>Mapeamento & Cruzamento</b>. Cadastre-os para ter os dados completos.</p>",
+                    "no módulo de <b>Mapeamento & Cruzamento</b>.</p>",
                     unsafe_allow_html=True,
                 )
-                missing_df = pd.DataFrame(missing)
-                missing_df.columns = ["Cliente", "Campanha", "Veículo", "Status"]
-                st.dataframe(
-                    missing_df.style.map(
-                        lambda _: "color:#f0883e;font-weight:600",
-                        subset=["Status"],
-                    ),
-                    use_container_width=True, hide_index=True,
-                )
+
+                # Agrupa por campanha para detectar múltiplos veículos
+                _miss_by_camp: dict[str, list[dict]] = {}
+                for _m in missing:
+                    _miss_by_camp.setdefault(_m["campanha"], []).append(_m)
+
+                for _camp_name, _camp_missing in _miss_by_camp.items():
+                    _camp_client = _camp_missing[0].get("cliente", "")
+                    _vehs_missing = [_m["veiculo"] for _m in _camp_missing]
+                    _problema = _camp_missing[0]["problema"]
+                    _is_multi = len(_vehs_missing) > 1
+
+                    _mc1, _mc2 = st.columns([5, 2])
+                    with _mc1:
+                        st.markdown(
+                            f"**{_camp_name}**  ·  `{_camp_client}`  ·  "
+                            f"<span style='color:#f0883e'>{_problema}</span>  ·  "
+                            f"{len(_vehs_missing)} veículo(s): {', '.join(_vehs_missing)}",
+                            unsafe_allow_html=True,
+                        )
+
+                    with _mc2:
+                        if _is_multi and role in ["admin", "editor"]:
+                            # Lote: cria campanha + todos os veículos de uma vez
+                            if st.button(
+                                f"📥 Criar em lote ({len(_vehs_missing)} veículos)",
+                                key=f"miss_batch_{_camp_name}",
+                                type="primary",
+                            ):
+                                try:
+                                    _existing_camps = {c["name"].lower(): c["id"] for c in get_campaigns(role="admin", include_archived=True)}
+                                    if _camp_name.lower() in _existing_camps:
+                                        _new_cid = _existing_camps[_camp_name.lower()]
+                                    else:
+                                        _new_cid = create_campaign(_camp_name, _camp_client)
+                                    _veh_ok, _veh_skip = 0, 0
+                                    for _vn in _vehs_missing:
+                                        try:
+                                            create_vehicle(_new_cid, _vn)
+                                            _veh_ok += 1
+                                        except Exception:
+                                            _veh_skip += 1
+                                    log_audit(username, "criar_em_lote", "campanha", _camp_name,
+                                              f"{_veh_ok} veículo(s) criados via pendentes")
+                                    st.success(f"✅ {_camp_name}: {_veh_ok} veículo(s) criado(s).")
+                                    st.rerun()
+                                except Exception as _be:
+                                    st.error(str(_be))
+                        elif role in ["admin", "editor"]:
+                            # Individual: navega para o mapeamento com a campanha pré-selecionada
+                            if st.button(
+                                "➕ Cadastrar",
+                                key=f"miss_create_{_camp_name}",
+                                type="primary",
+                            ):
+                                try:
+                                    _existing_camps = {c["name"].lower(): c["id"] for c in get_campaigns(role="admin", include_archived=True)}
+                                    if _camp_name.lower() in _existing_camps:
+                                        _new_cid = _existing_camps[_camp_name.lower()]
+                                    else:
+                                        _new_cid = create_campaign(_camp_name, _camp_client)
+                                    for _vn in _vehs_missing:
+                                        try:
+                                            create_vehicle(_new_cid, _vn)
+                                        except Exception:
+                                            pass
+                                    log_audit(username, "criar", "campanha", _camp_name,
+                                              f"Criado via pendentes: {', '.join(_vehs_missing)}")
+                                    # Navega direto para o mapeamento com essa campanha
+                                    st.session_state["page"] = "📥 Mapeamento & Cruzamento"
+                                    st.session_state["cfg_campaign_id"]   = _new_cid
+                                    st.session_state["cfg_campaign_name"] = _camp_name
+                                    st.rerun()
+                                except Exception as _ce:
+                                    st.error(str(_ce))
+
+                    st.divider()
 
         # ── KPI Cards (conta campanhas únicas) ────────────────────────────────
         unique_camps = camp_df.drop_duplicates(subset=["cliente", "campanha"])
