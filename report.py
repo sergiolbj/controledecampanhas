@@ -89,6 +89,9 @@ def _fetch_from_sheets(cfg: dict, mapping: dict) -> pd.DataFrame | None:
         return None
 
 
+_PARQUET_MAGIC = b"\x00PQT\x00"
+
+
 def load_plan(campaign_id: int, vehicle_id: int) -> pd.DataFrame | None:
     """Load plan from DB cache; falls back to Google Sheets if cache is stale/missing."""
     with _db() as conn:
@@ -106,17 +109,22 @@ def load_plan(campaign_id: int, vehicle_id: int) -> pd.DataFrame | None:
     mapping = json.loads(row[1]) if row[1] else {}
     cfg     = json.loads(row[2]) if row[2] else {}
 
-    # ── Try the cached pickle first ───────────────────────────────────────────
+    # ── Try the cached blob (parquet or legacy pickle) ────────────────────────
     try:
         blob = row[0]
         if isinstance(blob, memoryview):
             blob = blob.tobytes()
-        df = pickle.loads(blob)
+
+        if blob.startswith(_PARQUET_MAGIC):
+            df = pd.read_parquet(io.BytesIO(blob[len(_PARQUET_MAGIC):]), engine="pyarrow")
+        else:
+            df = pickle.loads(blob)  # legacy pickle blobs
+
         if isinstance(df, pd.DataFrame) and not df.empty:
             return df
         print("      [cache] blob vazio ou não-DataFrame")
     except Exception as exc:
-        print(f"      [cache] falha no unpickle: {type(exc).__name__}: {exc}")
+        print(f"      [cache] falha ao carregar blob: {type(exc).__name__}: {exc}")
 
     # ── Fallback: re-fetch from Google Sheets ─────────────────────────────────
     src = cfg.get("src", "")

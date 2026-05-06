@@ -191,25 +191,32 @@ def login_ui() -> None:
                 st.error("Usuário ou senha inválidos.")
 
 
+_PARQUET_MAGIC = b"\x00PQT\x00"  # prefix that identifies parquet-encoded blobs
+
+
 def save_ingestion(campaign_id: int, vehicle_id: int, data_type: str,
                    df, mapping: dict, source_info: str = "", config_json: str = "{}") -> None:
+    # Store as parquet — stable across all pandas / Python versions.
+    # Date columns are preserved with their types; no pickle protocol surprises.
     buf = io.BytesIO()
-    pickle.dump(df, buf)
+    df.to_parquet(buf, index=False, engine="pyarrow")
+    blob = _PARQUET_MAGIC + buf.getvalue()
+
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute("""
                 INSERT INTO ingestion_cache
                 (campaign_id, vehicle_id, data_type, data_blob, mapping_json, updated_at, source_info, config_json)
                 VALUES (%s,%s,%s,%s,%s,CURRENT_TIMESTAMP,%s,%s)
-                ON CONFLICT (campaign_id, vehicle_id, data_type) 
-                DO UPDATE SET 
+                ON CONFLICT (campaign_id, vehicle_id, data_type)
+                DO UPDATE SET
                     data_blob = EXCLUDED.data_blob,
                     mapping_json = EXCLUDED.mapping_json,
                     updated_at = CURRENT_TIMESTAMP,
                     source_info = EXCLUDED.source_info,
                     config_json = EXCLUDED.config_json
             """, (campaign_id, vehicle_id, data_type,
-                  psycopg2.Binary(buf.getvalue()), json.dumps(mapping, default=str), source_info, config_json))
+                  psycopg2.Binary(blob), json.dumps(mapping, default=str), source_info, config_json))
 
 
 def load_ingestion(campaign_id: int, vehicle_id: int,
@@ -227,8 +234,13 @@ def load_ingestion(campaign_id: int, vehicle_id: int,
         blob_data = row[0]
         if isinstance(blob_data, memoryview):
             blob_data = blob_data.tobytes()
-            
-        df = pickle.loads(blob_data)
+
+        if blob_data.startswith(_PARQUET_MAGIC):
+            df = pd.read_parquet(io.BytesIO(blob_data[len(_PARQUET_MAGIC):]), engine="pyarrow")
+        else:
+            # Legacy pickle blobs — still attempt to load for backward compat
+            df = pickle.loads(blob_data)
+
         mapping = json.loads(row[1]) if row[1] else {}
         config = json.loads(row[4]) if len(row) > 4 and row[4] else {}
         return df, mapping, row[2], row[3], config
