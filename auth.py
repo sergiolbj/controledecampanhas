@@ -141,6 +141,41 @@ def init_db() -> None:
                 )
             """)
             cur.execute("""
+                CREATE TABLE IF NOT EXISTS audit_log (
+                    id          SERIAL PRIMARY KEY,
+                    username    TEXT NOT NULL DEFAULT '',
+                    action      TEXT NOT NULL,
+                    entity_type TEXT NOT NULL DEFAULT '',
+                    entity_name TEXT NOT NULL DEFAULT '',
+                    details     TEXT NOT NULL DEFAULT '',
+                    ts          TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS vehicle_notes (
+                    id          SERIAL PRIMARY KEY,
+                    vehicle_id  INTEGER NOT NULL REFERENCES vehicles(id) ON DELETE CASCADE,
+                    campaign_id INTEGER NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+                    username    TEXT NOT NULL DEFAULT '',
+                    note        TEXT NOT NULL,
+                    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS login_log (
+                    id       SERIAL PRIMARY KEY,
+                    username TEXT NOT NULL,
+                    success  BOOLEAN NOT NULL,
+                    ts       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS system_config (
+                    key   TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                )
+            """)
+            cur.execute("""
                 ALTER TABLE ingestion_cache
                 ADD COLUMN IF NOT EXISTS updated_by TEXT NOT NULL DEFAULT ''
             """)
@@ -159,6 +194,10 @@ def init_db() -> None:
             cur.execute("""
                 ALTER TABLE users
                 ADD COLUMN IF NOT EXISTS email TEXT NOT NULL DEFAULT ''
+            """)
+            cur.execute("""
+                ALTER TABLE sessions
+                ADD COLUMN IF NOT EXISTS last_activity TEXT NOT NULL DEFAULT ''
             """)
             
             cur.execute("""
@@ -202,16 +241,39 @@ def validate_session(token: str) -> tuple[str, str] | None:
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT username, role, expires_at FROM sessions WHERE token=%s",
+                "SELECT username, role, expires_at, last_activity FROM sessions WHERE token=%s",
                 (token,),
             )
             row = cur.fetchone()
     if not row:
         return None
-    username, role, expires_at = row
-    if datetime.utcnow() > datetime.fromisoformat(expires_at):
+    username, role, expires_at, last_activity = row
+    now = datetime.utcnow()
+    if now > datetime.fromisoformat(expires_at):
         delete_session(token)
         return None
+    # Inactivity timeout check
+    timeout_hours = int(get_system_config("session_timeout_hours", "8"))
+    if last_activity:
+        try:
+            idle = (now - datetime.fromisoformat(last_activity)).total_seconds() / 3600
+            if idle > timeout_hours:
+                delete_session(token)
+                st.cache_data.clear()
+                return None
+        except ValueError:
+            pass
+    # Update last_activity (bypass cache — direct write)
+    try:
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE sessions SET last_activity=%s WHERE token=%s",
+                    (now.isoformat(), token),
+                )
+        st.cache_data.clear()
+    except Exception:
+        pass
     return username, role
 
 
@@ -235,11 +297,14 @@ def login_ui() -> None:
         if st.button("Entrar →", type="primary", use_container_width=True):
             role = verify_login(user, pw)
             if role:
+                log_login(user, success=True)
+                log_audit(user, "login", details="Login realizado com sucesso")
                 st.session_state.update(
                     logged_in=True, username=user, role=role, _just_logged_in=True
                 )
                 st.rerun()
             else:
+                log_login(user.strip() or "?", success=False)
                 st.error("Usuário ou senha inválidos.")
 
 
@@ -501,6 +566,178 @@ def delete_report_recipient(recipient_id: int) -> None:
         with conn.cursor() as cur:
             cur.execute("DELETE FROM report_recipients WHERE id=%s", (recipient_id,))
     st.cache_data.clear()
+
+
+# ── System config ─────────────────────────────────────────────────────────────
+
+def get_system_config(key: str, default: str = "") -> str:
+    try:
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT value FROM system_config WHERE key=%s", (key,))
+                row = cur.fetchone()
+        return row[0] if row else default
+    except Exception:
+        return default
+
+
+def set_system_config(key: str, value: str) -> None:
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO system_config (key, value) VALUES (%s,%s) "
+                "ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value",
+                (key, value),
+            )
+    st.cache_data.clear()
+
+
+# ── Audit log ─────────────────────────────────────────────────────────────────
+
+def log_audit(username: str, action: str, entity_type: str = "",
+              entity_name: str = "", details: str = "") -> None:
+    try:
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO audit_log (username, action, entity_type, entity_name, details) "
+                    "VALUES (%s,%s,%s,%s,%s)",
+                    (username, action, entity_type, entity_name, details),
+                )
+    except Exception:
+        pass
+
+
+@st.cache_data(ttl=30, show_spinner=False)
+def get_audit_log(limit: int = 200, entity_type: str | None = None,
+                  username: str | None = None) -> list[dict]:
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            filters, params = [], []
+            if entity_type:
+                filters.append("entity_type=%s"); params.append(entity_type)
+            if username:
+                filters.append("username=%s"); params.append(username)
+            where = ("WHERE " + " AND ".join(filters)) if filters else ""
+            params.append(limit)
+            cur.execute(
+                f"SELECT id, username, action, entity_type, entity_name, details, ts "
+                f"FROM audit_log {where} ORDER BY ts DESC LIMIT %s",
+                params,
+            )
+            rows = cur.fetchall()
+    return [{"id": r[0], "username": r[1], "action": r[2], "entity_type": r[3],
+             "entity_name": r[4], "details": r[5], "ts": r[6]} for r in rows]
+
+
+# ── Vehicle notes ─────────────────────────────────────────────────────────────
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_vehicle_notes(vehicle_id: int) -> list[dict]:
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, username, note, created_at FROM vehicle_notes "
+                "WHERE vehicle_id=%s ORDER BY created_at DESC",
+                (vehicle_id,),
+            )
+            rows = cur.fetchall()
+    return [{"id": r[0], "username": r[1], "note": r[2], "created_at": r[3]} for r in rows]
+
+
+def add_vehicle_note(vehicle_id: int, campaign_id: int, username: str, note: str) -> None:
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO vehicle_notes (vehicle_id, campaign_id, username, note) "
+                "VALUES (%s,%s,%s,%s)",
+                (vehicle_id, campaign_id, username, note.strip()),
+            )
+    st.cache_data.clear()
+
+
+def delete_vehicle_note(note_id: int) -> None:
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM vehicle_notes WHERE id=%s", (note_id,))
+    st.cache_data.clear()
+
+
+# ── Login log ─────────────────────────────────────────────────────────────────
+
+def log_login(username: str, success: bool) -> None:
+    try:
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO login_log (username, success) VALUES (%s,%s)",
+                    (username, success),
+                )
+    except Exception:
+        pass
+
+
+@st.cache_data(ttl=30, show_spinner=False)
+def get_login_history(username: str | None = None, limit: int = 50) -> list[dict]:
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            if username:
+                cur.execute(
+                    "SELECT username, success, ts FROM login_log "
+                    "WHERE username=%s ORDER BY ts DESC LIMIT %s",
+                    (username, limit),
+                )
+            else:
+                cur.execute(
+                    "SELECT username, success, ts FROM login_log ORDER BY ts DESC LIMIT %s",
+                    (limit,),
+                )
+            rows = cur.fetchall()
+    return [{"username": r[0], "success": r[1], "ts": r[2]} for r in rows]
+
+
+# ── Alert counts (sidebar badges) ────────────────────────────────────────────
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_alert_counts(username: str | None = None, role: str | None = None) -> dict:
+    today = datetime.utcnow().date()
+    soon  = today + timedelta(days=7)
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            # Campaigns ending within 7 days (from campaign_sheets_config not available here
+            # so we count alert_configs with ending_soon enabled)
+            cur.execute("""
+                SELECT COUNT(DISTINCT campaign_id) FROM alert_configs
+                WHERE alert_type='ending_soon' AND enabled=true
+            """)
+            ending = cur.fetchone()[0] or 0
+
+            # Campaigns without any assets in ingestion_cache
+            cur.execute("""
+                SELECT COUNT(DISTINCT c.id) FROM campaigns c
+                JOIN vehicles v ON v.campaign_id = c.id
+                WHERE COALESCE(c.archived, false) = false
+                  AND NOT EXISTS (
+                    SELECT 1 FROM ingestion_cache ic
+                    WHERE ic.campaign_id = c.id AND ic.data_type = 'assets'
+                  )
+            """)
+            no_assets = cur.fetchone()[0] or 0
+
+            # Campaigns without any plan
+            cur.execute("""
+                SELECT COUNT(DISTINCT c.id) FROM campaigns c
+                JOIN vehicles v ON v.campaign_id = c.id
+                WHERE COALESCE(c.archived, false) = false
+                  AND NOT EXISTS (
+                    SELECT 1 FROM ingestion_cache ic
+                    WHERE ic.campaign_id = c.id AND ic.data_type = 'plan'
+                  )
+            """)
+            no_plan = cur.fetchone()[0] or 0
+
+    return {"ending_soon": ending, "no_assets": no_assets, "no_plan": no_plan,
+            "total": ending + no_assets + no_plan}
 
 
 @st.cache_data(ttl=60, show_spinner=False)

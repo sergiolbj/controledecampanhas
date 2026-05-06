@@ -21,6 +21,11 @@ from auth import (
     get_mapping_coverage, clear_campaign_data, restore_ingestion_from_log,
     change_own_password, archive_campaign,
     get_report_recipients, add_report_recipient, toggle_report_recipient, delete_report_recipient,
+    log_audit, get_audit_log,
+    get_vehicle_notes, add_vehicle_note, delete_vehicle_note,
+    get_login_history,
+    get_alert_counts,
+    get_system_config, set_system_config,
 )
 
 COOKIE_NAME = "adops_session"
@@ -851,7 +856,11 @@ def main() -> None:
                 st.session_state["page"] = target
                 st.rerun()
 
-        _nav("📊 Dashboard", "📊 Dashboard",
+        # ── Item 32: badges de alerta ─────────────────────────────────────
+        _ac = get_alert_counts(username, role)
+        _badge = f" 🔴 {_ac['total']}" if _ac["total"] > 0 else ""
+
+        _nav("📊 Dashboard" + _badge, "📊 Dashboard",
              ["plan_df", "assets_df", "merged_df", "unmatched_df", "fuzzy_df",
               "all_plan_configs", "all_assets_configs", "_cross_sig",
               "cfg_campaign_id", "cfg_campaign_name"])
@@ -868,6 +877,8 @@ def main() -> None:
             _nav("⚙️ Gerenciar Campanhas", "⚙️ Gerenciar Campanhas")
             _nav("🏢 Clientes", "🏢 Clientes")
             _nav("👥 Usuários", "👥 Usuários")
+            if role == "admin":
+                _nav("📋 Auditoria", "📋 Auditoria")
 
         # ── Item 16: busca global de campanha ────────────────────────────────
         st.divider()
@@ -2192,6 +2203,79 @@ def main() -> None:
             )
             st.markdown(card_html, unsafe_allow_html=True)
 
+        # ── Item 36: Calendário mensal ────────────────────────────────────────
+        st.divider()
+        st.subheader("📅 Calendário de Campanhas")
+
+        _cal_today = pd.Timestamp.now().normalize()
+        _cal_col1, _cal_col2 = st.columns([1, 4])
+        _cal_month_offset = _cal_col1.number_input(
+            "Mês (0 = atual)", min_value=-12, max_value=12, value=0,
+            step=1, key="cal_month_offset",
+        )
+        _cal_ref = (_cal_today + pd.DateOffset(months=int(_cal_month_offset))).replace(day=1)
+        _cal_year, _cal_month = _cal_ref.year, _cal_ref.month
+        import calendar as _calendar_mod
+        _cal_days_in_month = _calendar_mod.monthrange(_cal_year, _cal_month)[1]
+        _cal_col2.caption(
+            f"**{_cal_ref.strftime('%B %Y').capitalize()}** · {_cal_days_in_month} dias"
+        )
+
+        # Build calendar HTML
+        _cal_camps_cal = filtered[filtered["data_inicio"].notna() | filtered["data_fim"].notna()].copy()
+        _STATUS_COLORS = {
+            "🟢 Em veiculação": "#238636",
+            "📅 Aguardando":    "#1f6feb",
+            "🏁 Finalizada":    "#6e7681",
+            "⏳ Sem datas":     "#30363d",
+        }
+
+        _cal_day_cols = [str(d) for d in range(1, _cal_days_in_month + 1)]
+        _cal_rows_html = ""
+        for _, _cr in _cal_camps_cal.iterrows():
+            _c_start = _cr.get("data_inicio")
+            _c_end   = _cr.get("data_fim")
+            _c_name  = str(_cr.get("campanha", ""))[:30]
+            _c_status = str(_cr.get("status_campanha", ""))
+            _c_color  = _STATUS_COLORS.get(_c_status, "#30363d")
+            _cells = ""
+            for _d in range(1, _cal_days_in_month + 1):
+                _day_ts = pd.Timestamp(_cal_year, _cal_month, _d)
+                _in_range = True
+                if pd.notna(_c_start) and _day_ts < pd.Timestamp(_c_start): _in_range = False
+                if pd.notna(_c_end)   and _day_ts > pd.Timestamp(_c_end):   _in_range = False
+                _is_today = _day_ts.date() == _cal_today.date()
+                _bg = _c_color if _in_range else "transparent"
+                _border = "2px solid #f0883e" if _is_today else "1px solid transparent"
+                _cells += f'<td style="background:{_bg};border:{_border};width:18px;height:18px;border-radius:3px"></td>'
+            _cal_rows_html += f"""
+            <tr>
+              <td style="color:#cdd9e5;font-size:11px;padding-right:8px;white-space:nowrap;max-width:180px;overflow:hidden;text-overflow:ellipsis">{_c_name}</td>
+              {_cells}
+            </tr>"""
+
+        _header_cells = "".join(
+            f'<th style="color:#8b949e;font-size:10px;width:18px;text-align:center">'
+            f'{"<b style=\'color:#f0883e\'>" + str(d) + "</b>" if pd.Timestamp(_cal_year, _cal_month, d).date() == _cal_today.date() else str(d)}'
+            f'</th>'
+            for d in range(1, _cal_days_in_month + 1)
+        )
+        _cal_html = f"""
+        <div style="overflow-x:auto;background:#161b22;padding:12px;border-radius:8px;border:1px solid #30363d">
+          <table style="border-collapse:separate;border-spacing:2px;font-family:monospace">
+            <thead><tr>
+              <th style="color:#8b949e;font-size:10px;padding-right:8px;text-align:left">Campanha</th>
+              {_header_cells}
+            </tr></thead>
+            <tbody>{_cal_rows_html}</tbody>
+          </table>
+          <div style="margin-top:8px;display:flex;gap:12px">
+            {"".join(f'<span style="font-size:10px;color:#8b949e"><span style="display:inline-block;width:10px;height:10px;background:{c};border-radius:2px;margin-right:4px"></span>{s}</span>' for s, c in _STATUS_COLORS.items())}
+          </div>
+        </div>"""
+        import streamlit.components.v1 as _cv1_cal
+        _cv1_cal.html(_cal_html, height=max(120, len(_cal_camps_cal) * 22 + 60), scrolling=True)
+
         # ── Data table + export ───────────────────────────────────────────────
         st.divider()
         st.subheader("📊 Tabela de Dados")
@@ -2356,6 +2440,7 @@ def main() -> None:
                         if new_cname.strip() and new_cname.strip() != cname:
                             try:
                                 rename_campaign(cid, new_cname.strip())
+                                log_audit(username, "renomear", "campanha", cname, f"Novo nome: {new_cname.strip()}")
                                 st.success(f"Renomeada para **{new_cname.strip()}**")
                                 st.rerun()
                             except Exception as e:
@@ -2366,8 +2451,9 @@ def main() -> None:
                     _arch_help  = "Remove do fluxo ativo sem excluir dados" if not _is_archived else "Reativa a campanha"
                     if st.button(_arch_label, key=f"arch_camp_btn_{cid}", help=_arch_help):
                         archive_campaign(cid, not _is_archived)
-                        _verb = "Arquivada" if not _is_archived else "Desarquivada"
-                        st.success(f"{_verb}: **{cname}**")
+                        _verb = "arquivar" if not _is_archived else "desarquivar"
+                        log_audit(username, _verb, "campanha", cname)
+                        st.success(f"{'Arquivada' if not _is_archived else 'Desarquivada'}: **{cname}**")
                         st.rerun()
 
                     # ── Excluir campanha ───────────────────────────────────
@@ -2382,6 +2468,7 @@ def main() -> None:
                         dc1, dc2 = st.columns(2)
                         if dc1.button("✅ Sim, excluir tudo", key=f"confirm_yes_camp_{cid}", type="primary"):
                             delete_campaign(cid)
+                            log_audit(username, "excluir", "campanha", cname, f"{len(vehs)} veículo(s) removidos")
                             st.session_state.pop(f"confirm_del_camp_{cid}", None)
                             st.rerun()
                         if dc2.button("❌ Cancelar", key=f"confirm_no_camp_{cid}"):
@@ -2453,6 +2540,32 @@ def main() -> None:
                                 _ts_parts.append(f"Assets: {_s}" + (f" · {_vts['assets_by']}" if _vts["assets_by"] else ""))
                             if _ts_parts:
                                 st.caption("🕐 " + "  ·  ".join(_ts_parts))
+
+                            # ── Item 40: Notas por veículo ────────────────────
+                            with st.expander(f"💬 Notas — {vname}", expanded=False):
+                                _notes = get_vehicle_notes(vid)
+                                if _notes:
+                                    for _nt in _notes:
+                                        _nt_ts = _nt["created_at"].strftime("%d/%m/%Y %H:%M") if hasattr(_nt["created_at"], "strftime") else str(_nt["created_at"])[:16]
+                                        _nc1, _nc2 = st.columns([9, 1])
+                                        _nc1.markdown(
+                                            f"<small style='color:#8b949e'>{_nt['username']} · {_nt_ts}</small><br>{_nt['note']}",
+                                            unsafe_allow_html=True,
+                                        )
+                                        if _nc2.button("🗑", key=f"del_note_{_nt['id']}", help="Excluir nota"):
+                                            delete_vehicle_note(_nt["id"])
+                                            st.rerun()
+                                else:
+                                    st.caption("Nenhuma nota registrada.")
+                                _new_note = st.text_area(
+                                    "Nova nota", key=f"note_input_{vid}", height=80,
+                                    placeholder="Observação, ocorrência, contexto…",
+                                    label_visibility="collapsed",
+                                )
+                                if st.button("💬 Salvar nota", key=f"note_save_{vid}"):
+                                    if _new_note.strip():
+                                        add_vehicle_note(vid, cid, username, _new_note.strip())
+                                        st.rerun()
 
                             with st.expander(f"📋 Histórico de atualizações — {vname}", expanded=False):
                                 _log = get_ingestion_log(cid, vid, limit=20)
@@ -2785,6 +2898,79 @@ def main() -> None:
                         st.rerun()
                     else:
                         st.warning("Informe um e-mail.")
+
+        # ── Item 42: Timeout de sessão por inatividade ────────────────────────
+        if role == "admin":
+            st.divider()
+            st.subheader("🔐 Segurança da Sessão")
+            _cur_timeout = int(get_system_config("session_timeout_hours", "8"))
+            _new_timeout = st.number_input(
+                "Tempo máximo de inatividade (horas)",
+                min_value=1, max_value=168, value=_cur_timeout, step=1,
+                help="Sessões sem atividade por mais deste tempo serão encerradas automaticamente.",
+                key="session_timeout_input",
+            )
+            if st.button("💾 Salvar timeout", key="save_timeout"):
+                set_system_config("session_timeout_hours", str(_new_timeout))
+                st.success(f"Timeout atualizado para {_new_timeout}h.")
+
+        # ── Item 43: Histórico de logins por usuário ──────────────────────────
+        if role == "admin":
+            st.divider()
+            st.subheader("🔑 Histórico de Logins Recentes")
+            _lh_all = get_login_history(limit=100)
+            if _lh_all:
+                _lh_df = pd.DataFrame(_lh_all)
+                _lh_df["ts"] = pd.to_datetime(_lh_df["ts"]).dt.strftime("%d/%m/%Y %H:%M:%S")
+                _lh_df["resultado"] = _lh_df["success"].map({True: "✅ Sucesso", False: "❌ Falha"})
+                st.dataframe(
+                    _lh_df[["ts", "username", "resultado"]].rename(columns={
+                        "ts": "Data/Hora", "username": "Usuário", "resultado": "Resultado"
+                    }),
+                    use_container_width=True, hide_index=True, height=300,
+                )
+            else:
+                st.caption("Nenhum login registrado ainda.")
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    #  PAGE — AUDITORIA (admin only)
+    # ═══════════════════════════════════════════════════════════════════════════
+    elif page == "📋 Auditoria":
+        st.title("📋 Log de Auditoria")
+
+        if role != "admin":
+            st.warning("🔒 Acesso negado.")
+            return
+
+        _aud_c1, _aud_c2, _aud_c3 = st.columns(3)
+        _aud_entity = _aud_c1.selectbox(
+            "Filtrar por tipo",
+            ["— todos —", "campanha", "veículo", "usuário", "cliente", "dados", "login", "configuração"],
+            key="aud_entity_filter",
+        )
+        _aud_user_filter = _aud_c2.text_input("Filtrar por usuário", key="aud_user_filter", placeholder="username")
+        _aud_limit = _aud_c3.number_input("Máx. registros", min_value=50, max_value=1000, value=200, step=50, key="aud_limit")
+
+        _aud_logs = get_audit_log(
+            limit=int(_aud_limit),
+            entity_type=None if _aud_entity == "— todos —" else _aud_entity,
+            username=_aud_user_filter.strip() or None,
+        )
+
+        if not _aud_logs:
+            st.info("Nenhum registro de auditoria encontrado.")
+        else:
+            _aud_df = pd.DataFrame(_aud_logs)
+            _aud_df["ts"] = pd.to_datetime(_aud_df["ts"]).dt.strftime("%d/%m/%Y %H:%M:%S")
+            st.caption(f"**{len(_aud_df)}** registro(s)")
+            st.dataframe(
+                _aud_df[["ts", "username", "action", "entity_type", "entity_name", "details"]].rename(columns={
+                    "ts": "Data/Hora", "username": "Usuário", "action": "Ação",
+                    "entity_type": "Tipo", "entity_name": "Entidade", "details": "Detalhes",
+                }),
+                use_container_width=True, hide_index=True, height=520,
+            )
+            _export_buttons(_aud_df, "auditoria", "exp_audit")
 
 
 if __name__ == "__main__":
