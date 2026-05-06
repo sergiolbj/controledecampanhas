@@ -1,0 +1,10 @@
+.env
+data/
+__pycache__/
+*.pyc
+.streamlit/secrets.toml
+test_pg*.py
+fetch_supabase.py
+adops.db
+migrate_to_supabase.py
+extensions/
