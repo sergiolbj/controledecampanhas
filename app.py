@@ -64,14 +64,16 @@ def save_template(client: str, name: str, source_type: str, mapping: dict) -> No
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                INSERT INTO mapping_templates 
+                INSERT INTO mapping_templates
                 (client_name, template_name, source_type, mapping_json) VALUES (%s,%s,%s,%s)
-                ON CONFLICT (client_name, template_name) DO UPDATE SET 
+                ON CONFLICT (client_name, template_name) DO UPDATE SET
                     source_type = EXCLUDED.source_type,
                     mapping_json = EXCLUDED.mapping_json
             """, (client, name, source_type, json.dumps(mapping)))
+    st.cache_data.clear()
 
 
+@st.cache_data(ttl=60, show_spinner=False)
 def load_templates(client: str) -> dict:
     with get_db() as conn:
         with conn.cursor() as cur:
@@ -181,16 +183,22 @@ def mapper_ui(
         with st.expander("Prévia dos dados", expanded=False):
             st.dataframe(df.head(8), use_container_width=True)
 
-        # ── Carregar template (topo, antes dos selectboxes) ───────────────────
+        # ── Templates (carregar e salvar no mesmo expander) ───────────────────
         if role == "admin":
-            with st.expander("📂 Carregar template salvo", expanded=False):
-                client = st.text_input("Cliente", key=f"{prefix}_cli")
-                if client:
-                    templates = load_templates(client)
+            with st.expander("📂 Templates de mapeamento", expanded=False):
+                clients_list = get_clients()
+                tpl_client = st.selectbox(
+                    "Cliente", ["—"] + clients_list, key=f"{prefix}_cli"
+                )
+
+                # ── Carregar ──────────────────────────────────────────────
+                st.markdown("**Carregar template**")
+                if tpl_client != "—":
+                    templates = load_templates(tpl_client)
                     if templates:
                         tl1, tl2 = st.columns([4, 1])
                         sel_tpl = tl1.selectbox(
-                            "Template", ["—"] + list(templates.keys()),
+                            "Template salvo", ["—"] + list(templates.keys()),
                             key=f"{prefix}_tload",
                         )
                         tl2.write(""); tl2.write("")
@@ -198,8 +206,6 @@ def mapper_ui(
                             if sel_tpl != "—":
                                 tpl_map = templates[sel_tpl]["mapping"]
                                 cols_available = ["(não mapear)"] + list(df.columns)
-                                # Grava diretamente nos keys dos selectboxes para sobrescrever
-                                # o valor atual armazenado no session_state
                                 for field, col_val in tpl_map.items():
                                     st.session_state[f"{prefix}_{field}"] = (
                                         col_val if col_val in cols_available else "(não mapear)"
@@ -211,6 +217,24 @@ def mapper_ui(
                                 st.warning("Selecione um template.")
                     else:
                         st.caption("Nenhum template salvo para este cliente.")
+                else:
+                    st.caption("Selecione um cliente para ver os templates disponíveis.")
+
+                # ── Salvar ────────────────────────────────────────────────
+                st.markdown("**Salvar mapeamento atual como template**")
+                sv1, sv2 = st.columns([4, 1])
+                tpl_name = sv1.text_input(
+                    "Nome do template",
+                    placeholder="Ex: Plano Google Ads",
+                    key=f"{prefix}_tname",
+                )
+                sv2.write(""); sv2.write("")
+                if sv2.button("💾 Salvar", key=f"{prefix}_tsave"):
+                    if tpl_client != "—" and tpl_name.strip():
+                        save_template(tpl_client, tpl_name.strip(), src, mapping)
+                        st.success(f"Template **{tpl_name}** salvo para **{tpl_client}**!")
+                    else:
+                        st.warning("Selecione um cliente e informe o nome do template.")
 
             # Badge do template ativo + botão para limpar
             loaded_name = st.session_state.get(f"{prefix}_loaded_name")
@@ -267,23 +291,6 @@ def mapper_ui(
                  == veh_filter.strip().lower()).sum()
             st.caption(f"🔍 Prévia: **{n:,}** de **{len(df):,}** linhas correspondem ao filtro")
 
-        # ── Salvar template atual ─────────────────────────────────────────────
-        if role == "admin":
-            st.markdown("---")
-            sv1, sv2 = st.columns([4, 1])
-            tpl_name = sv1.text_input(
-                "Salvar mapeamento atual como template",
-                placeholder="Nome do template",
-                key=f"{prefix}_tname",
-            )
-            sv2.write(""); sv2.write("")
-            if sv2.button("💾 Salvar", key=f"{prefix}_tsave"):
-                client_val = st.session_state.get(f"{prefix}_cli", "").strip()
-                if client_val and tpl_name.strip():
-                    save_template(client_val, tpl_name.strip(), src, mapping)
-                    st.success(f"Template **{tpl_name}** salvo!")
-                else:
-                    st.warning("Abra **Carregar template** acima, preencha o Cliente e informe o nome.")
 
     else:
         veh_col    = "(não usar)"
