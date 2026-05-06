@@ -6,6 +6,7 @@ import pickle
 import secrets
 from datetime import datetime, timedelta
 
+import pandas as pd
 import streamlit as st
 import psycopg2
 from dotenv import load_dotenv
@@ -146,6 +147,7 @@ def create_session(username: str, role: str, days: int = 7) -> str:
     return token
 
 
+@st.cache_data(ttl=120, show_spinner=False)
 def validate_session(token: str) -> tuple[str, str] | None:
     with get_db() as conn:
         with conn.cursor() as cur:
@@ -196,10 +198,39 @@ _PARQUET_MAGIC = b"\x00PQT\x00"  # prefix that identifies parquet-encoded blobs
 
 def save_ingestion(campaign_id: int, vehicle_id: int, data_type: str,
                    df, mapping: dict, source_info: str = "", config_json: str = "{}") -> None:
-    # Store as parquet — stable across all pandas / Python versions.
-    # Date columns are preserved with their types; no pickle protocol surprises.
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    df = df.copy()
+
+    # Constrói o schema pyarrow explicitamente para cada coluna,
+    # forçando colunas object para string — evita inferência de tipo errada
+    # (ex.: coluna com valores como 'R 195.598,50' sendo inferida como double).
+    pa_fields = []
+    for col in df.columns:
+        if df[col].dtype == object:
+            # Converte todos os valores para str (None para nulos)
+            df[col] = df[col].apply(
+                lambda x: None if (x is None or (isinstance(x, float) and x != x)) else str(x)
+            )
+            pa_fields.append(pa.field(str(col), pa.string()))
+        elif pd.api.types.is_datetime64_any_dtype(df[col]):
+            pa_fields.append(pa.field(str(col), pa.timestamp("us")))
+        elif pd.api.types.is_integer_dtype(df[col]):
+            pa_fields.append(pa.field(str(col), pa.int64()))
+        elif pd.api.types.is_float_dtype(df[col]):
+            pa_fields.append(pa.field(str(col), pa.float64()))
+        elif pd.api.types.is_bool_dtype(df[col]):
+            pa_fields.append(pa.field(str(col), pa.bool_()))
+        else:
+            # Deixa o pyarrow inferir para tipos menos comuns
+            arr = pa.array(df[col].tolist(), from_pandas=True)
+            pa_fields.append(pa.field(str(col), arr.type))
+
+    schema = pa.schema(pa_fields)
+    table = pa.Table.from_pandas(df, schema=schema, preserve_index=False)
     buf = io.BytesIO()
-    df.to_parquet(buf, index=False, engine="pyarrow")
+    pq.write_table(table, buf)
     blob = _PARQUET_MAGIC + buf.getvalue()
 
     with get_db() as conn:
@@ -217,8 +248,10 @@ def save_ingestion(campaign_id: int, vehicle_id: int, data_type: str,
                     config_json = EXCLUDED.config_json
             """, (campaign_id, vehicle_id, data_type,
                   psycopg2.Binary(blob), json.dumps(mapping, default=str), source_info, config_json))
+    st.cache_data.clear()
 
 
+@st.cache_data(ttl=300, show_spinner=False)
 def load_ingestion(campaign_id: int, vehicle_id: int,
                    data_type: str) -> tuple:
     with get_db() as conn:
@@ -260,8 +293,10 @@ def save_user_state(username: str, campaign_id: int, vehicle_id: int) -> None:
                     vehicle_id = EXCLUDED.vehicle_id,
                     updated_at = CURRENT_TIMESTAMP
             """, (username, campaign_id, vehicle_id))
+    st.cache_data.clear()
 
 
+@st.cache_data(ttl=60, show_spinner=False)
 def load_user_state(username: str) -> tuple[int | None, int | None]:
     with get_db() as conn:
         with conn.cursor() as cur:
@@ -273,6 +308,7 @@ def load_user_state(username: str) -> tuple[int | None, int | None]:
     return (row[0], row[1]) if row else (None, None)
 
 
+@st.cache_data(ttl=60, show_spinner=False)
 def get_campaigns(username: str | None = None, role: str | None = None) -> list[dict]:
     with get_db() as conn:
         with conn.cursor() as cur:
@@ -302,7 +338,9 @@ def create_campaign(name: str, client_name: str = "") -> int:
                 "INSERT INTO campaigns (name, client_name) VALUES (%s,%s) RETURNING id",
                 (name.strip(), client_name.strip()),
             )
-            return cur.fetchone()[0]
+            cid = cur.fetchone()[0]
+    st.cache_data.clear()
+    return cid
 
 
 def update_campaign_client(campaign_id: int, client_name: str) -> None:
@@ -312,8 +350,10 @@ def update_campaign_client(campaign_id: int, client_name: str) -> None:
                 "UPDATE campaigns SET client_name=%s WHERE id=%s",
                 (client_name.strip(), campaign_id),
             )
+    st.cache_data.clear()
 
 
+@st.cache_data(ttl=60, show_spinner=False)
 def get_users() -> list[dict]:
     with get_db() as conn:
         with conn.cursor() as cur:
@@ -331,6 +371,7 @@ def add_user(username: str, password: str, role: str) -> None:
                 "INSERT INTO users (username, password_hash, role) VALUES (%s,%s,%s)",
                 (username.strip(), _hash(password), role),
             )
+    st.cache_data.clear()
 
 
 def update_user(username: str, new_password: str | None = None, new_role: str | None = None) -> None:
@@ -343,14 +384,17 @@ def update_user(username: str, new_password: str | None = None, new_role: str | 
                 )
             if new_role:
                 cur.execute("UPDATE users SET role=%s WHERE username=%s", (new_role, username))
+    st.cache_data.clear()
 
 
 def delete_user(username: str) -> None:
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute("DELETE FROM users WHERE username=%s", (username,))
+    st.cache_data.clear()
 
 
+@st.cache_data(ttl=60, show_spinner=False)
 def get_clients() -> list[str]:
     with get_db() as conn:
         with conn.cursor() as cur:
@@ -365,6 +409,7 @@ def add_client(name: str) -> None:
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute("INSERT INTO clients (name) VALUES (%s) ON CONFLICT DO NOTHING", (name.strip(),))
+    st.cache_data.clear()
 
 
 def delete_client(name: str) -> None:
@@ -374,6 +419,7 @@ def delete_client(name: str) -> None:
             cur.execute("DELETE FROM user_client_access WHERE client_name=%s", (name,))
             cur.execute("UPDATE campaigns SET client_name='' WHERE client_name=%s", (name,))
             cur.execute("UPDATE mapping_templates SET client_name='' WHERE client_name=%s", (name,))
+    st.cache_data.clear()
 
 
 def rename_client(old_name: str, new_name: str) -> None:
@@ -391,6 +437,7 @@ def rename_client(old_name: str, new_name: str) -> None:
             cur.execute("DELETE FROM user_client_access WHERE client_name=%s", (old_name,))
             # Delete old client if rename was successful
             cur.execute("DELETE FROM clients WHERE name=%s AND EXISTS (SELECT 1 FROM clients WHERE name=%s)", (old_name, new_name))
+    st.cache_data.clear()
 
 
 def get_user_clients(username: str) -> list[str]:
@@ -414,8 +461,10 @@ def set_user_clients(username: str, clients: list[str]) -> None:
                         "INSERT INTO user_client_access (username, client_name) VALUES (%s,%s) ON CONFLICT DO NOTHING",
                         (username, c.strip()),
                     )
+    st.cache_data.clear()
 
 
+@st.cache_data(ttl=60, show_spinner=False)
 def get_vehicles(campaign_id: int) -> list[dict]:
     with get_db() as conn:
         with conn.cursor() as cur:
@@ -434,7 +483,9 @@ def create_vehicle(campaign_id: int, name: str) -> int:
                 "INSERT INTO vehicles (campaign_id, name) VALUES (%s,%s) RETURNING id",
                 (campaign_id, name.strip()),
             )
-            return cur.fetchone()[0]
+            vid = cur.fetchone()[0]
+    st.cache_data.clear()
+    return vid
 
 
 def logout() -> None:
@@ -466,8 +517,10 @@ def save_campaign_sheets_config(
                 "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                 (sheet_url, sheet_name, col_cliente, col_campanha, col_inicio, col_fim, col_veiculos, col_link_plano, col_link_dash, header_row),
             )
+    st.cache_data.clear()
 
 
+@st.cache_data(ttl=120, show_spinner=False)
 def load_campaign_sheets_config() -> dict | None:
     with get_db() as conn:
         with conn.cursor() as cur:
