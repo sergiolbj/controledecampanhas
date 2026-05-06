@@ -325,16 +325,20 @@ def gantt_chart(df: pd.DataFrame) -> None:
     else:
         base_y = pd.Series("Campanha", index=plot.index)
 
+    # Use sys_vehicle identity column when available — it is stamped pre-merge
+    # and cannot be contaminated by the fuzzy join
+    _veh_col = "sys_vehicle" if "sys_vehicle" in plot.columns else "vehicle"
+
     # Use a compound row label to separate vehicles into distinct rows
-    plot["row_label"] = base_y.str.strip() + "  ·  " + plot["vehicle"].astype(str).str.strip()
-    
+    plot["row_label"] = base_y.str.strip() + "  ·  " + plot[_veh_col].astype(str).str.strip()
+
     # Sort to ensure consistent ordering
     plot = plot.sort_values(by=["row_label"]).reset_index(drop=True)
     row_labels_ordered = plot["row_label"].unique().tolist()
     y_col = "row_label"
 
     hover_cols = [
-        c for c in ["sys_campaign", "campaign_name", "asset_id", "format", "status", "asset_link"]
+        c for c in ["sys_campaign", "sys_vehicle", "campaign_name", "asset_id", "format", "status", "asset_link"]
         if c in plot.columns
     ]
 
@@ -343,8 +347,8 @@ def gantt_chart(df: pd.DataFrame) -> None:
         x_start="start_date",
         x_end="end_date",
         y=y_col,
-        color="vehicle",
-        text="vehicle",
+        color=_veh_col,
+        text=_veh_col,
         hover_data={c: True for c in hover_cols},
         color_discrete_sequence=px.colors.qualitative.Dark24,
         labels={c: FIELD_LABELS.get(c, c) for c in plot.columns},
@@ -875,6 +879,9 @@ def main() -> None:
                                     if df is not None and not df.empty:
                                         df = df.copy()
                                         df["vehicle"] = veh_name
+                                        if dtype == "plan":
+                                            df["sys_vehicle"]  = veh_name
+                                            df["sys_campaign"] = c_dict.get("camp_name", "")
                                         all_dfs.append(df)
                                     new_configs.append(c_dict)
                                     continue
@@ -895,6 +902,9 @@ def main() -> None:
                                     df = apply_mapping(df, active)
 
                                 df["vehicle"] = veh_name
+                                if dtype == "plan":
+                                    df["sys_vehicle"]  = veh_name
+                                    df["sys_campaign"] = c_dict.get("camp_name", "")
 
                                 # Only persist and use result if it has actual rows
                                 if not df.empty:
@@ -951,14 +961,20 @@ def main() -> None:
                             df = df.copy()
                             df["vehicle"]       = veh_name
                             df["campaign_name"] = camp["name"]
+                            # Identity columns stamped pre-merge so they can't be altered by the
+                            # fuzzy join — used for filters and Gantt labels (plan only)
+                            if dtype == "plan":
+                                df["sys_vehicle"]  = veh_name
+                                df["sys_campaign"] = camp["name"]
                             dfs_list.append(df)
                             cfgs_list.append({
-                                "camp_id":  camp_id_loop,
-                                "veh_id":   veh_id,
-                                "veh_name": veh_name,
-                                "cfg":      cfg,
-                                "mapping":  mapping,
-                                "src_info": src_info,
+                                "camp_id":   camp_id_loop,
+                                "camp_name": camp["name"],
+                                "veh_id":    veh_id,
+                                "veh_name":  veh_name,
+                                "cfg":       cfg,
+                                "mapping":   mapping,
+                                "src_info":  src_info,
                             })
 
                 for k in ["merged_df", "unmatched_df", "fuzzy_df", "_cross_sig"]:
@@ -1024,10 +1040,11 @@ def main() -> None:
                     )
                 return ["(Todos)"]
 
+            _veh_col = "sys_vehicle" if "sys_vehicle" in base.columns else "vehicle"
             sel_client     = f1.selectbox("Cliente", _opts("sys_client"), key="f_cli")
             sel_sys_camp   = f2.selectbox("Campanha (Sistema)", _opts("sys_campaign"), key="f_scamp")
             sel_asset_camp = f3.selectbox("Campanha (Assets)", _opts("campaign_name_asset"), key="f_acamp")
-            sel_vehicle    = f4.selectbox("Veículo",  _opts("vehicle"),       key="f_veh")
+            sel_vehicle    = f4.selectbox("Veículo",  _opts(_veh_col),        key="f_veh")
             sel_vstatus    = f5.selectbox("Status",   _opts("veiculacao_status"), key="f_sts")
 
         filtered = base.copy()
@@ -1035,7 +1052,7 @@ def main() -> None:
             ("sys_client",          sel_client),
             ("sys_campaign",        sel_sys_camp),
             ("campaign_name_asset", sel_asset_camp),
-            ("vehicle",             sel_vehicle),
+            (_veh_col,              sel_vehicle),
             ("veiculacao_status",   sel_vstatus),
         ]:
             if sel != "(Todos)" and col in filtered.columns:
@@ -1055,12 +1072,13 @@ def main() -> None:
             # ── Summary charts ────────────────────────────────────────────────────
             _BG = dict(paper_bgcolor="#0d1117", font_color="#c9d1d9", plot_bgcolor="#0d1117")
     
+            _dash_veh_col = "sys_vehicle" if "sys_vehicle" in filtered.columns else "vehicle"
             has_status  = "veiculacao_status" in filtered.columns
-            has_vehicle = "vehicle" in filtered.columns
-    
+            has_vehicle = _dash_veh_col in filtered.columns
+
             if has_status or has_vehicle:
                 cc1, cc2 = st.columns(2)
-    
+
                 if has_status:
                     with cc1:
                         vc = filtered["veiculacao_status"].value_counts().reset_index()
@@ -1072,10 +1090,10 @@ def main() -> None:
                         )
                         fig.update_layout(**_BG)
                         st.plotly_chart(fig, use_container_width=True)
-    
+
                 if has_vehicle:
                     with cc2:
-                        vc = filtered["vehicle"].value_counts().reset_index()
+                        vc = filtered[_dash_veh_col].value_counts().reset_index()
                         vc.columns = ["Veículo", "Qtd"]
                         fig = px.bar(
                             vc, x="Veículo", y="Qtd", color="Veículo",
