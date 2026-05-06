@@ -868,7 +868,8 @@ def main() -> None:
 
                                 if not cfg or cfg.get("src") != "Link (Google Sheets / Office 365)":
                                     df, _, _, _, _ = load_ingestion(c_id, veh_id, dtype)
-                                    if df is not None:
+                                    if df is not None and not df.empty:
+                                        df = df.copy()
                                         df["vehicle"] = veh_name
                                         all_dfs.append(df)
                                     new_configs.append(c_dict)
@@ -891,8 +892,10 @@ def main() -> None:
 
                                 df["vehicle"] = veh_name
 
-                                save_ingestion(c_id, veh_id, dtype, df, mapping, src_info, json.dumps(cfg))
-                                all_dfs.append(df)
+                                # Only persist and use result if it has actual rows
+                                if not df.empty:
+                                    save_ingestion(c_id, veh_id, dtype, df, mapping, src_info, json.dumps(cfg))
+                                    all_dfs.append(df)
                                 new_configs.append(c_dict)
 
                             if all_dfs:
@@ -921,37 +924,7 @@ def main() -> None:
                 st.warning("Nenhuma campanha disponível para o seu perfil.")
                 return
 
-            def _load_veh_df(camp_id_loop, veh_id, veh_name, camp_name, dtype):
-                """Load df for a vehicle: re-fetch from Sheets if configured, else from DB."""
-                df, mapping, _, src_info, cfg = load_ingestion(camp_id_loop, veh_id, dtype)
-                if cfg and cfg.get("src") == "Link (Google Sheets / Office 365)":
-                    try:
-                        from data_processor import read_file, apply_mapping, normalize_dates
-                        fresh = read_file("url", url=cfg["url"], sheet_name=cfg.get("sheet", 0), header_row=cfg.get("header_row", 0))
-                        if dtype == "plan":
-                            veh_col    = cfg.get("veh_col", "(não usar)")
-                            veh_filter = cfg.get("veh_filter", "")
-                            if veh_col != "(não usar)" and veh_filter.strip():
-                                fresh = fresh[fresh[veh_col].astype(str).str.strip().str.lower() == veh_filter.strip().lower()].copy()
-                            # Drop raw veh_col to avoid conflicts with the canonical vehicle column
-                            if veh_col != "(não usar)" and veh_col in fresh.columns:
-                                fresh = fresh.drop(columns=[veh_col])
-                            active = {k: v for k, v in mapping.items() if v != "(não mapear)"}
-                            fresh = normalize_dates(apply_mapping(fresh, active), ["start_date", "end_date"])
-                        else:
-                            active = {k: v for k, v in mapping.items() if v != "(não mapear)"}
-                            fresh = apply_mapping(fresh, active)
-                        # Always stamp with the canonical vehicle name from DB
-                        fresh["vehicle"] = veh_name
-                        save_ingestion(camp_id_loop, veh_id, dtype, fresh, mapping, src_info, __import__("json").dumps(cfg))
-                        df = fresh
-                    except Exception:
-                        pass  # fallback to cached DB data
-                if df is not None:
-                    df["vehicle"] = veh_name  # enforce canonical name on cached data too
-                return df, mapping, src_info, cfg
-
-            with st.spinner("Sincronizando e carregando todas as campanhas..."):
+            with st.spinner("Carregando campanhas..."):
                 all_plan_dfs = []
                 all_assets_dfs = []
                 all_plan_configs = []
@@ -959,41 +932,43 @@ def main() -> None:
 
                 for camp in camps:
                     camp_id_loop = camp["id"]
-                    vehs = get_vehicles(camp_id_loop)
-                    for v in vehs:
-                        veh_id = v["id"]
-                        plan_df_c, pm, p_src, p_cfg = _load_veh_df(camp_id_loop, v["id"], v["name"], camp["name"], "plan")
-                        assets_df_c, am, a_src, a_cfg = _load_veh_df(camp_id_loop, v["id"], v["name"], camp["name"], "assets")
+                    for v in get_vehicles(camp_id_loop):
+                        veh_id   = v["id"]
+                        veh_name = v["name"]
 
-                        if plan_df_c is not None:
-                            if "vehicle" not in plan_df_c.columns:
-                                plan_df_c["vehicle"] = v["name"]
-                            if "campaign_name" not in plan_df_c.columns:
-                                plan_df_c["campaign_name"] = camp["name"]
-                            all_plan_dfs.append(plan_df_c)
-                            all_plan_configs.append({"camp_id": camp_id_loop, "veh_id": veh_id, "veh_name": v["name"], "cfg": p_cfg, "mapping": pm, "src_info": p_src})
-
-                        if assets_df_c is not None:
-                            if "vehicle" not in assets_df_c.columns:
-                                assets_df_c["vehicle"] = v["name"]
-                            if "campaign_name" not in assets_df_c.columns:
-                                assets_df_c["campaign_name"] = camp["name"]
-                            all_assets_dfs.append(assets_df_c)
-                            all_assets_configs.append({"camp_id": camp_id_loop, "veh_id": veh_id, "veh_name": v["name"], "cfg": a_cfg, "mapping": am, "src_info": a_src})
+                        for dtype, dfs_list, cfgs_list in [
+                            ("plan",   all_plan_dfs,   all_plan_configs),
+                            ("assets", all_assets_dfs, all_assets_configs),
+                        ]:
+                            df, mapping, _, src_info, cfg = load_ingestion(camp_id_loop, veh_id, dtype)
+                            # Only use rows with actual data — never include empty dfs
+                            if df is None or df.empty:
+                                continue
+                            df = df.copy()
+                            df["vehicle"]       = veh_name
+                            df["campaign_name"] = camp["name"]
+                            dfs_list.append(df)
+                            cfgs_list.append({
+                                "camp_id":  camp_id_loop,
+                                "veh_id":   veh_id,
+                                "veh_name": veh_name,
+                                "cfg":      cfg,
+                                "mapping":  mapping,
+                                "src_info": src_info,
+                            })
 
                 for k in ["merged_df", "unmatched_df", "fuzzy_df", "_cross_sig"]:
                     st.session_state.pop(k, None)
 
-                big_plan = None
-                big_assets = None
-                if all_plan_dfs:
-                    big_plan = pd.concat(all_plan_dfs, ignore_index=True)
-                    st.session_state["plan_df"] = big_plan
+                big_plan   = pd.concat(all_plan_dfs,   ignore_index=True) if all_plan_dfs   else None
+                big_assets = pd.concat(all_assets_dfs, ignore_index=True) if all_assets_dfs else None
+
+                if big_plan is not None:
+                    st.session_state["plan_df"]          = big_plan
                     st.session_state["all_plan_configs"] = all_plan_configs
-                if all_assets_dfs:
-                    big_assets = pd.concat(all_assets_dfs, ignore_index=True)
-                    st.session_state["assets_df"] = big_assets
-                    st.session_state["all_assets_configs"] = all_assets_configs
+                if big_assets is not None:
+                    st.session_state["assets_df"]           = big_assets
+                    st.session_state["all_assets_configs"]  = all_assets_configs
 
                 if big_plan is not None:
                     available = [c for c in big_plan.columns if c in TAXONOMY_JOIN_FIELDS]
@@ -1003,13 +978,13 @@ def main() -> None:
                         assets_agg = aggregate_assets(big_assets, available)
                         matched, unmatched = fuzzy_merge_taxonomy(big_plan, assets_agg, available, threshold=85)
                     else:
-                        matched = big_plan.copy()
+                        matched  = big_plan.copy()
                         unmatched = pd.DataFrame()
                     matched = compute_veiculacao_status(matched)
-                    st.session_state["merged_df"] = matched
+                    st.session_state["merged_df"]    = matched
                     st.session_state["unmatched_df"] = unmatched
 
-                st.session_state["cfg_campaign_id"] = None
+                st.session_state["cfg_campaign_id"]   = None
                 st.session_state["cfg_campaign_name"] = "Todas as Campanhas"
                 st.rerun()
 
