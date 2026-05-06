@@ -19,7 +19,7 @@ from auth import (
     has_default_password, get_ingestion_timestamps, get_ingestion_log,
     get_alert_configs, save_alert_config, update_alert_config, delete_alert_config,
     get_mapping_coverage, clear_campaign_data, restore_ingestion_from_log,
-    change_own_password,
+    change_own_password, archive_campaign,
 )
 
 COOKIE_NAME = "adops_session"
@@ -234,6 +234,16 @@ def mapper_ui(
                             if sel_tpl != "—":
                                 tpl_map = templates[sel_tpl]["mapping"]
                                 cols_available = ["(não mapear)"] + list(df.columns)
+                                missing_cols = [
+                                    col_val for col_val in tpl_map.values()
+                                    if col_val and col_val != "(não mapear)" and col_val not in cols_available
+                                ]
+                                if missing_cols:
+                                    st.warning(
+                                        f"⚠️ {len(missing_cols)} campo(s) deste template não existem nesta planilha: "
+                                        + ", ".join(f"`{c}`" for c in missing_cols)
+                                        + ". Esses campos serão ignorados."
+                                    )
                                 for field, col_val in tpl_map.items():
                                     st.session_state[f"{prefix}_{field}"] = (
                                         col_val if col_val in cols_available else "(não mapear)"
@@ -2200,6 +2210,105 @@ def main() -> None:
             st.warning("🔒 Acesso negado.")
             return
 
+        # ── Item 29: criação em lote via planilha ─────────────────────────────
+        with st.expander("📥 Criar campanhas e veículos em lote", expanded=False):
+            st.caption(
+                "Faça upload de uma planilha com as colunas **nome_campanha**, **cliente** e **veiculos** "
+                "(veículos separados por vírgula). Baixe o modelo abaixo para começar."
+            )
+
+            # Gera template para download
+            import io as _io_batch
+            _tpl_buf = _io_batch.BytesIO()
+            _tpl_df = pd.DataFrame([
+                {"nome_campanha": "Campanha Exemplo A", "cliente": "Cliente PPG",
+                 "veiculos": "Google Ads, Meta, TikTok"},
+                {"nome_campanha": "Campanha Exemplo B", "cliente": "Cliente PPG",
+                 "veiculos": "YouTube"},
+                {"nome_campanha": "Campanha Exemplo C", "cliente": "Outro Cliente", "veiculos": ""},
+            ])
+            with pd.ExcelWriter(_tpl_buf, engine="openpyxl") as _w:
+                _tpl_df.to_excel(_w, index=False, sheet_name="Campanhas")
+            st.download_button(
+                "⬇️ Baixar planilha modelo (.xlsx)",
+                _tpl_buf.getvalue(),
+                "modelo_lote_campanhas.xlsx",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="batch_template_dl",
+            )
+
+            st.markdown("---")
+            _batch_file = st.file_uploader(
+                "Upload da planilha preenchida", type=["xlsx", "xls", "csv"],
+                key="batch_upload"
+            )
+            if _batch_file:
+                try:
+                    if _batch_file.name.lower().endswith(".csv"):
+                        _batch_df = pd.read_csv(_batch_file)
+                    else:
+                        _batch_df = pd.read_excel(_batch_file)
+                    _batch_df.columns = [c.strip().lower().replace(" ", "_") for c in _batch_df.columns]
+
+                    _missing_cols = [c for c in ["nome_campanha"] if c not in _batch_df.columns]
+                    if _missing_cols:
+                        st.error(f"Coluna(s) obrigatória(s) ausente(s): {', '.join(_missing_cols)}")
+                    else:
+                        _batch_df = _batch_df.fillna("")
+                        _preview_rows = []
+                        for _, _br in _batch_df.iterrows():
+                            _cn = str(_br.get("nome_campanha", "")).strip()
+                            _cl = str(_br.get("cliente", "")).strip()
+                            _vv = str(_br.get("veiculos", "")).strip()
+                            _vs = [v.strip() for v in _vv.split(",") if v.strip()] if _vv else []
+                            if not _cn:
+                                continue
+                            _preview_rows.append({
+                                "Campanha": _cn,
+                                "Cliente": _cl or "—",
+                                "Veículos": ", ".join(_vs) if _vs else "—",
+                                "N° Veículos": len(_vs),
+                            })
+
+                        if _preview_rows:
+                            st.markdown(f"**Prévia:** {len(_preview_rows)} campanha(s) a criar")
+                            st.dataframe(pd.DataFrame(_preview_rows), use_container_width=True, hide_index=True)
+
+                            if st.button("✅ Criar tudo", type="primary", key="batch_create"):
+                                _existing_names = {c["name"].lower() for c in get_campaigns(role="admin", include_archived=True)}
+                                _created, _skipped, _errors_b = 0, 0, []
+                                for _, _br in _batch_df.iterrows():
+                                    _cn = str(_br.get("nome_campanha", "")).strip()
+                                    _cl = str(_br.get("cliente", "")).strip()
+                                    _vv = str(_br.get("veiculos", "")).strip()
+                                    _vs = [v.strip() for v in _vv.split(",") if v.strip()] if _vv else []
+                                    if not _cn:
+                                        continue
+                                    try:
+                                        if _cn.lower() in _existing_names:
+                                            _camps_all = get_campaigns(role="admin", include_archived=True)
+                                            _cid_b = next(c["id"] for c in _camps_all if c["name"].lower() == _cn.lower())
+                                            _skipped += 1
+                                        else:
+                                            _cid_b = create_campaign(_cn, _cl)
+                                            _created += 1
+                                        for _vn in _vs:
+                                            try:
+                                                create_vehicle(_cid_b, _vn)
+                                            except Exception:
+                                                pass  # veículo já existe
+                                    except Exception as _be:
+                                        _errors_b.append(f"{_cn}: {_be}")
+                                st.success(f"✅ {_created} campanha(s) criada(s), {_skipped} já existia(m).")
+                                if _errors_b:
+                                    for _eb in _errors_b:
+                                        st.error(_eb)
+                                st.rerun()
+                        else:
+                            st.warning("Nenhuma linha válida encontrada na planilha.")
+                except Exception as _batch_err:
+                    st.error(f"Erro ao ler planilha: {_batch_err}")
+
         # ── Item 19: cobertura de mapeamento ──────────────────────────────────
         _cov_data = get_mapping_coverage()
         if _cov_data:
@@ -2222,7 +2331,9 @@ def main() -> None:
                 )
             st.divider()
 
-        all_camps = get_campaigns(role="admin")
+        # ── Item 31: toggle mostrar arquivadas ────────────────────────────────
+        _show_archived = st.toggle("Mostrar campanhas arquivadas", value=False, key="show_archived_toggle")
+        all_camps = get_campaigns(role="admin", include_archived=_show_archived)
         if not all_camps:
             st.info("Nenhuma campanha cadastrada.")
         else:
@@ -2230,9 +2341,11 @@ def main() -> None:
                 cid   = camp["id"]
                 cname = camp["name"]
                 ccli  = camp.get("client_name", "") or "—"
+                _is_archived = camp.get("archived", False)
                 vehs  = get_vehicles(cid)
 
-                with st.expander(f"📢 **{cname}**  ·  👤 {ccli}  ·  {len(vehs)} veículo(s)", expanded=False):
+                _arch_badge = " 🗄 *arquivada*" if _is_archived else ""
+                with st.expander(f"📢 **{cname}**{_arch_badge}  ·  👤 {ccli}  ·  {len(vehs)} veículo(s)", expanded=False):
 
                     # ── Renomear campanha ──────────────────────────────────
                     rc1, rc2 = st.columns([5, 1])
@@ -2246,6 +2359,15 @@ def main() -> None:
                                 st.rerun()
                             except Exception as e:
                                 st.error(f"Erro: {e}")
+
+                    # ── Arquivar / Desarquivar campanha (item 31) ─────────
+                    _arch_label = "🔓 Desarquivar campanha" if _is_archived else "🗄 Arquivar campanha"
+                    _arch_help  = "Remove do fluxo ativo sem excluir dados" if not _is_archived else "Reativa a campanha"
+                    if st.button(_arch_label, key=f"arch_camp_btn_{cid}", help=_arch_help):
+                        archive_campaign(cid, not _is_archived)
+                        _verb = "Arquivada" if not _is_archived else "Desarquivada"
+                        st.success(f"{_verb}: **{cname}**")
+                        st.rerun()
 
                     # ── Excluir campanha ───────────────────────────────────
                     if st.button("🗑 Excluir campanha", key=f"del_camp_btn_{cid}"):

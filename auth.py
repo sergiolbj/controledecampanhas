@@ -135,6 +135,10 @@ def init_db() -> None:
                 ADD COLUMN IF NOT EXISTS updated_by TEXT NOT NULL DEFAULT ''
             """)
             cur.execute("""
+                ALTER TABLE campaigns
+                ADD COLUMN IF NOT EXISTS archived BOOLEAN NOT NULL DEFAULT false
+            """)
+            cur.execute("""
                 ALTER TABLE ingestion_log
                 ADD COLUMN IF NOT EXISTS data_blob BYTEA
             """)
@@ -350,26 +354,28 @@ def load_user_state(username: str) -> tuple[int | None, int | None]:
 
 
 @st.cache_data(ttl=60, show_spinner=False)
-def get_campaigns(username: str | None = None, role: str | None = None) -> list[dict]:
+def get_campaigns(username: str | None = None, role: str | None = None,
+                  include_archived: bool = False) -> list[dict]:
+    arch_filter = "" if include_archived else " AND COALESCE(archived, false) = false"
     with get_db() as conn:
         with conn.cursor() as cur:
             if role == "admin" or username is None:
                 cur.execute(
-                    "SELECT id, name, COALESCE(client_name,'') FROM campaigns "
-                    "ORDER BY client_name, name"
+                    f"SELECT id, name, COALESCE(client_name,''), COALESCE(archived,false) "
+                    f"FROM campaigns WHERE 1=1{arch_filter} ORDER BY client_name, name"
                 )
             else:
-                cur.execute("""
-                    SELECT c.id, c.name, COALESCE(c.client_name,'')
+                cur.execute(f"""
+                    SELECT c.id, c.name, COALESCE(c.client_name,''), COALESCE(c.archived,false)
                     FROM campaigns c
-                    WHERE c.client_name = ''
+                    WHERE (c.client_name = ''
                        OR c.client_name IN (
                            SELECT client_name FROM user_client_access WHERE username = %s
-                       )
+                       )){arch_filter}
                     ORDER BY c.client_name, c.name
                 """, (username,))
             rows = cur.fetchall()
-    return [{"id": r[0], "name": r[1], "client_name": r[2]} for r in rows]
+    return [{"id": r[0], "name": r[1], "client_name": r[2], "archived": r[3]} for r in rows]
 
 
 def create_campaign(name: str, client_name: str = "") -> int:
@@ -527,6 +533,13 @@ def create_vehicle(campaign_id: int, name: str) -> int:
             vid = cur.fetchone()[0]
     st.cache_data.clear()
     return vid
+
+
+def archive_campaign(campaign_id: int, archived: bool = True) -> None:
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE campaigns SET archived=%s WHERE id=%s", (archived, campaign_id))
+    st.cache_data.clear()
 
 
 def rename_campaign(campaign_id: int, new_name: str) -> None:
