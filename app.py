@@ -16,7 +16,7 @@ from auth import (
     get_clients, add_client, delete_client, rename_client, get_user_clients, set_user_clients,
     create_session, validate_session, delete_session,
     save_campaign_sheets_config, load_campaign_sheets_config,
-    has_default_password,
+    has_default_password, get_ingestion_timestamps, get_ingestion_log,
 )
 
 COOKIE_NAME = "adops_session"
@@ -59,6 +59,29 @@ st.markdown("""
 .block-container                   { padding-top: 1.5rem; }
 </style>
 """, unsafe_allow_html=True)
+
+
+# ── Export helper ─────────────────────────────────────────────────────────────
+def _export_buttons(df: pd.DataFrame, base_name: str, key: str) -> None:
+    """Renderiza botões de download CSV e Excel lado a lado."""
+    import io as _io
+    ec1, ec2 = st.columns(2)
+    ec1.download_button(
+        "⬇️ Exportar CSV",
+        df.to_csv(index=False).encode("utf-8"),
+        f"{base_name}.csv", "text/csv",
+        key=f"{key}_csv",
+    )
+    _buf = _io.BytesIO()
+    with pd.ExcelWriter(_buf, engine="openpyxl") as _w:
+        df.to_excel(_w, index=False, sheet_name="Dados")
+    ec2.download_button(
+        "⬇️ Exportar Excel",
+        _buf.getvalue(),
+        f"{base_name}.xlsx",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        key=f"{key}_xlsx",
+    )
 
 
 # ── Template CRUD ─────────────────────────────────────────────────────────────
@@ -431,16 +454,20 @@ def _copy_ingestion(
         else:
             df = apply_mapping(df, active)
 
+        _dup_user = st.session_state.get("username", "")
         save_ingestion(dst_camp_id, dst_veh_id, dtype, df, src_map,
-                       f"Duplicado de camp={src_camp_id} veh={src_veh_id}", json.dumps(cfg))
+                       f"Duplicado de camp={src_camp_id} veh={src_veh_id}", json.dumps(cfg),
+                       username=_dup_user)
         return f"{len(df):,} linhas importadas do novo link"
     else:
         # Copy existing blob
         df_src, map_src, _, src_info, _ = load_ingestion(src_camp_id, src_veh_id, dtype)
         if df_src is None or df_src.empty:
             return "sem dados na origem — pulado"
+        _dup_user = st.session_state.get("username", "")
         save_ingestion(dst_camp_id, dst_veh_id, dtype, df_src, map_src,
-                       f"Duplicado de camp={src_camp_id} veh={src_veh_id}", json.dumps(src_cfg))
+                       f"Duplicado de camp={src_camp_id} veh={src_veh_id}", json.dumps(src_cfg),
+                       username=_dup_user)
         return f"{len(df_src):,} linhas copiadas"
 
 
@@ -870,7 +897,17 @@ def main() -> None:
             veh_name = veh_name or "Veículo"
 
             b1, b2 = st.columns([5, 1])
-            b1.caption(f"📢 **{camp_name}** › 📺 **{veh_name}**")
+            _ts = get_ingestion_timestamps(camp_id, veh_id)
+            def _fmt_ts(ts, by: str) -> str:
+                if ts is None:
+                    return "nunca salvo"
+                s = ts.strftime("%d/%m/%Y %H:%M") if hasattr(ts, "strftime") else str(ts)[:16]
+                return f"{s} por **{by}**" if by else s
+            b1.caption(
+                f"📢 **{camp_name}** › 📺 **{veh_name}**  ·  "
+                f"Plano: {_fmt_ts(_ts['plan'], _ts['plan_by'])}  ·  "
+                f"Assets: {_fmt_ts(_ts['assets'], _ts['assets_by'])}"
+            )
             if b2.button("← Alterar veículo", key="back_veh"):
                 has_data = "plan_df" in st.session_state or "assets_df" in st.session_state
                 if has_data:
@@ -902,46 +939,51 @@ def main() -> None:
                     "Plano de Conteúdo", "plan", PLAN_FIELDS, role
                 )
                 if plan_df is not None:
-                    if st.button("✅ Confirmar Plano", type="primary", key="confirm_plan"):
+                    if st.button("👁 Pré-visualizar mapeamento", key="preview_plan"):
                         active = {k: v for k, v in plan_map.items() if v != "(não mapear)"}
-                        missing_fields = []
-                        if "ad_name" not in active:
-                            missing_fields.append("Nome do Anúncio")
-                        if "start_date" not in active:
-                            missing_fields.append("Data de Início")
-                        if "end_date" not in active:
-                            missing_fields.append("Data de Fim")
-                        if missing_fields:
-                            st.warning(
-                                f"⚠️ Campo(s) importante(s) não mapeado(s): **{', '.join(missing_fields)}**. "
-                                "O cruzamento e o relatório podem ficar incompletos. Confirme mesmo assim?"
-                            )
-                            st.session_state["_plan_confirm_anyway"] = True
-                        else:
-                            st.session_state["_plan_confirm_anyway"] = True
-
-                    if st.session_state.pop("_plan_confirm_anyway", False):
-                        mapped = plan_df.copy()
+                        _prev = plan_df.copy()
                         if veh_col != "(não usar)" and veh_filter.strip():
-                            mask = (
-                                mapped[veh_col].astype(str).str.strip().str.lower()
-                                == veh_filter.strip().lower()
+                            _prev = _prev[_prev[veh_col].astype(str).str.strip().str.lower() == veh_filter.strip().lower()].copy()
+                        if veh_col != "(não usar)" and veh_col in _prev.columns:
+                            _prev = _prev.rename(columns={veh_col: "vehicle"})
+                        _prev = normalize_dates(apply_mapping(_prev, active), ["start_date", "end_date"])
+                        missing_fields = []
+                        if "ad_name"     not in active: missing_fields.append("Nome do Anúncio")
+                        if "start_date"  not in active: missing_fields.append("Data de Início")
+                        if "end_date"    not in active: missing_fields.append("Data de Fim")
+                        st.session_state["_plan_preview"] = {
+                            "df": _prev, "missing": missing_fields,
+                            "source": plan_source, "config": plan_config, "mapping": plan_map,
+                        }
+
+                    _prev_data = st.session_state.get("_plan_preview")
+                    if _prev_data is not None:
+                        if _prev_data["missing"]:
+                            st.warning(
+                                f"⚠️ Campo(s) importante(s) não mapeado(s): **{', '.join(_prev_data['missing'])}**. "
+                                "O cruzamento pode ficar incompleto."
                             )
-                            mapped = mapped[mask].copy()
-                        if veh_col != "(não usar)" and veh_col in mapped.columns:
-                            mapped = mapped.rename(columns={veh_col: "vehicle"})
-                        active = {k: v for k, v in plan_map.items() if v != "(não mapear)"}
-                        mapped = normalize_dates(apply_mapping(mapped, active), ["start_date", "end_date"])
-                        st.session_state["plan_df"]      = mapped
-                        st.session_state["plan_mapping"] = plan_map
-                        st.session_state["plan_source"]  = plan_source
-                        st.session_state["plan_config"]  = plan_config
-                        save_ingestion(
-                            st.session_state["cfg_campaign_id"],
-                            st.session_state["cfg_vehicle_id"],
-                            "plan", mapped, plan_map, plan_source, json.dumps(plan_config)
-                        )
-                        st.success(f"✅ Plano confirmado e salvo: {len(mapped):,} registros.")
+                        st.caption(f"Prévia — **{len(_prev_data['df']):,}** linhas após mapeamento:")
+                        st.dataframe(_prev_data["df"].head(8), use_container_width=True, hide_index=True)
+                        pc1, pc2 = st.columns(2)
+                        if pc1.button("✅ Confirmar e Salvar Plano", type="primary", key="confirm_plan_save"):
+                            mapped = _prev_data["df"]
+                            st.session_state["plan_df"]      = mapped
+                            st.session_state["plan_mapping"] = _prev_data["mapping"]
+                            st.session_state["plan_source"]  = _prev_data["source"]
+                            st.session_state["plan_config"]  = _prev_data["config"]
+                            save_ingestion(
+                                st.session_state["cfg_campaign_id"],
+                                st.session_state["cfg_vehicle_id"],
+                                "plan", mapped, _prev_data["mapping"],
+                                _prev_data["source"], json.dumps(_prev_data["config"]),
+                                username=username,
+                            )
+                            st.session_state.pop("_plan_preview", None)
+                            st.success(f"✅ Plano confirmado e salvo: {len(mapped):,} registros.")
+                        if pc2.button("❌ Cancelar", key="cancel_plan_preview"):
+                            st.session_state.pop("_plan_preview", None)
+                            st.rerun()
 
             with tab_assets:
                 if st.session_state.get("assets_source"):
@@ -950,35 +992,45 @@ def main() -> None:
                     "Base de Assets", "assets", ASSET_FIELDS, role
                 )
                 if assets_df is not None:
-                    if st.button("✅ Confirmar Assets", type="primary", key="confirm_assets"):
+                    if st.button("👁 Pré-visualizar mapeamento", key="preview_assets"):
                         active = {k: v for k, v in assets_map.items() if v != "(não mapear)"}
+                        _prev_a = apply_mapping(assets_df.copy(), active)
                         missing_fields_a = []
-                        if "asset_id" not in active:
-                            missing_fields_a.append("ID do Asset")
-                        if "asset_link" not in active:
-                            missing_fields_a.append("Link do Asset")
-                        if missing_fields_a:
-                            st.warning(
-                                f"⚠️ Campo(s) importante(s) não mapeado(s): **{', '.join(missing_fields_a)}**. "
-                                "O cruzamento pode ficar incompleto. Confirme mesmo assim?"
-                            )
-                            st.session_state["_assets_confirm_anyway"] = True
-                        else:
-                            st.session_state["_assets_confirm_anyway"] = True
+                        if "asset_id"   not in active: missing_fields_a.append("ID do Asset")
+                        if "asset_link" not in active: missing_fields_a.append("Link do Asset")
+                        st.session_state["_assets_preview"] = {
+                            "df": _prev_a, "missing": missing_fields_a,
+                            "source": assets_source, "config": assets_config, "mapping": assets_map,
+                        }
 
-                    if st.session_state.pop("_assets_confirm_anyway", False):
-                        active = {k: v for k, v in assets_map.items() if v != "(não mapear)"}
-                        mapped = apply_mapping(assets_df, active)
-                        st.session_state["assets_df"]      = mapped
-                        st.session_state["assets_mapping"] = assets_map
-                        st.session_state["assets_source"]  = assets_source
-                        st.session_state["assets_config"]  = assets_config
-                        save_ingestion(
-                            st.session_state["cfg_campaign_id"],
-                            st.session_state["cfg_vehicle_id"],
-                            "assets", mapped, assets_map, assets_source, json.dumps(assets_config)
-                        )
-                        st.success(f"Assets confirmados e salvos: {len(mapped):,} registros.")
+                    _prev_a_data = st.session_state.get("_assets_preview")
+                    if _prev_a_data is not None:
+                        if _prev_a_data["missing"]:
+                            st.warning(
+                                f"⚠️ Campo(s) importante(s) não mapeado(s): **{', '.join(_prev_a_data['missing'])}**. "
+                                "O cruzamento pode ficar incompleto."
+                            )
+                        st.caption(f"Prévia — **{len(_prev_a_data['df']):,}** linhas após mapeamento:")
+                        st.dataframe(_prev_a_data["df"].head(8), use_container_width=True, hide_index=True)
+                        ac1, ac2 = st.columns(2)
+                        if ac1.button("✅ Confirmar e Salvar Assets", type="primary", key="confirm_assets_save"):
+                            mapped_a = _prev_a_data["df"]
+                            st.session_state["assets_df"]      = mapped_a
+                            st.session_state["assets_mapping"] = _prev_a_data["mapping"]
+                            st.session_state["assets_source"]  = _prev_a_data["source"]
+                            st.session_state["assets_config"]  = _prev_a_data["config"]
+                            save_ingestion(
+                                st.session_state["cfg_campaign_id"],
+                                st.session_state["cfg_vehicle_id"],
+                                "assets", mapped_a, _prev_a_data["mapping"],
+                                _prev_a_data["source"], json.dumps(_prev_a_data["config"]),
+                                username=username,
+                            )
+                            st.session_state.pop("_assets_preview", None)
+                            st.success(f"Assets confirmados e salvos: {len(mapped_a):,} registros.")
+                        if ac2.button("❌ Cancelar", key="cancel_assets_preview"):
+                            st.session_state.pop("_assets_preview", None)
+                            st.rerun()
 
             # ── Cruzamento automático ─────────────────────────────────────────
             plan_loaded   = "plan_df" in st.session_state
@@ -1075,16 +1127,14 @@ def main() -> None:
 
                     with t_ok:
                         st.dataframe(merged, use_container_width=True, height=420, hide_index=True)
-                        st.download_button("⬇️ Exportar CSV",
-                            merged.to_csv(index=False).encode("utf-8"), "merged.csv", "text/csv")
+                        _export_buttons(merged, "cruzamento", "exp_merged")
 
                     with t_miss:
                         if unmatched.empty:
                             st.success("🎉 Todas as linhas do plano foram correspondidas!")
                         else:
                             st.dataframe(unmatched, use_container_width=True, height=420, hide_index=True)
-                            st.download_button("⬇️ Exportar Sem Match",
-                                unmatched.to_csv(index=False).encode("utf-8"), "unmatched.csv", "text/csv")
+                            _export_buttons(unmatched, "sem_match", "exp_unmatched")
 
                     with t_alert:
                         if alerts.empty:
@@ -1099,8 +1149,7 @@ def main() -> None:
                                     lambda _: "background-color:#3d1f00;color:#ffa657",
                                     subset=["Status"] if "Status" in ac else []),
                                 use_container_width=True, height=420, hide_index=True)
-                            st.download_button("⬇️ Exportar Alertas",
-                                alerts[ac].to_csv(index=False).encode("utf-8"), "alertas.csv", "text/csv")
+                            _export_buttons(alerts[ac], "alertas", "exp_alerts")
 
                     with t_fuzz:
                         if fuzzy_df.empty:
@@ -1187,7 +1236,8 @@ def main() -> None:
                                     df["sys_campaign"] = c_dict.get("camp_name", "")
 
                                 if not df.empty:
-                                    save_ingestion(c_id, veh_id, dtype, df, mapping, src_info, json.dumps(cfg))
+                                    save_ingestion(c_id, veh_id, dtype, df, mapping, src_info, json.dumps(cfg),
+                                                   username=st.session_state.get("username", ""))
                                     all_dfs.append(df)
                                 new_configs.append(c_dict)
                             except Exception as e_veh:
@@ -1364,6 +1414,25 @@ def main() -> None:
 
         st.caption(f"Exibindo **{len(filtered):,}** de **{len(base):,}** registros")
 
+        # ── Item 13: alertas de campanhas encerrando em ≤7 dias ──────────────
+        _today = pd.Timestamp.now().normalize()
+        _deadline = _today + pd.Timedelta(days=7)
+        _end_col = next((c for c in ["end_date", "data_fim"] if c in filtered.columns), None)
+        if _end_col:
+            _soon = filtered[
+                filtered[_end_col].notna() &
+                (pd.to_datetime(filtered[_end_col], errors="coerce") >= _today) &
+                (pd.to_datetime(filtered[_end_col], errors="coerce") <= _deadline)
+            ]
+            if not _soon.empty:
+                _camp_col = next((c for c in ["sys_campaign", "campaign_name"] if c in _soon.columns), None)
+                _soon_camps = _soon[_camp_col].dropna().unique().tolist() if _camp_col else []
+                _label = ", ".join(_soon_camps) if _soon_camps else f"{len(_soon)} registro(s)"
+                st.warning(
+                    f"⏰ **{len(_soon)} peça(s)** encerram nos próximos 7 dias: {_label}",
+                    icon="⏰",
+                )
+
         if filtered.empty:
             st.warning("Nenhum dado disponível para exibir no Dashboard. Se você acabou de criar a campanha, acesse 'Mapeamento & Cruzamento' para ingerir os dados.")
         else:
@@ -1465,11 +1534,7 @@ def main() -> None:
         tbl = filtered[ordered + rest].rename(columns=TABLE_COLS)
 
         st.dataframe(tbl, use_container_width=True, hide_index=True, height=420)
-        st.download_button(
-            "⬇️ Exportar CSV",
-            tbl.to_csv(index=False).encode("utf-8"),
-            "criativos.csv", "text/csv",
-        )
+        _export_buttons(tbl, "criativos", "exp_dash_tbl")
 
 
     # ═══════════════════════════════════════════════════════════════════════════
@@ -1935,12 +2000,7 @@ def main() -> None:
         table_df = filtered[["cliente", "campanha", "data_inicio", "data_fim", "veiculos", "link_plano", "link_dash", "status_campanha", "dias_restantes"]].copy()
         table_df.columns = ["Cliente", "Campanha", "Início", "Fim", "Veículos", "Link Plano", "Link Dash", "Status", "Dias Restantes"]
         st.dataframe(table_df, use_container_width=True, hide_index=True, height=420)
-
-        st.download_button(
-            "⬇️ Exportar CSV",
-            table_df.to_csv(index=False).encode("utf-8"),
-            "campanhas_veiculacao.csv", "text/csv",
-        )
+        _export_buttons(table_df, "campanhas_veiculacao", "exp_camp_tbl")
 
     # ═══════════════════════════════════════════════════════════════════════════
     #  PAGE — GERENCIAR CAMPANHAS (admin/editor)
@@ -2028,6 +2088,35 @@ def main() -> None:
                                 if dv2.button("❌ Cancelar", key=f"confirm_no_veh_{vid}"):
                                     st.session_state.pop(f"confirm_del_veh_{vid}", None)
                                     st.rerun()
+
+                            # ── Timestamps (item 11 extra) + Log (item 15) ────
+                            _vts = get_ingestion_timestamps(cid, vid)
+                            _ts_parts = []
+                            if _vts["plan"]:
+                                _s = _vts["plan"].strftime("%d/%m/%Y %H:%M") if hasattr(_vts["plan"], "strftime") else str(_vts["plan"])[:16]
+                                _ts_parts.append(f"Plano: {_s}" + (f" · {_vts['plan_by']}" if _vts["plan_by"] else ""))
+                            if _vts["assets"]:
+                                _s = _vts["assets"].strftime("%d/%m/%Y %H:%M") if hasattr(_vts["assets"], "strftime") else str(_vts["assets"])[:16]
+                                _ts_parts.append(f"Assets: {_s}" + (f" · {_vts['assets_by']}" if _vts["assets_by"] else ""))
+                            if _ts_parts:
+                                st.caption("🕐 " + "  ·  ".join(_ts_parts))
+
+                            with st.expander(f"📋 Histórico de atualizações — {vname}", expanded=False):
+                                _log = get_ingestion_log(cid, vid, limit=20)
+                                if not _log:
+                                    st.caption("Nenhuma atualização registrada.")
+                                else:
+                                    _log_rows = []
+                                    for _e in _log:
+                                        _ts_str = _e["ts"].strftime("%d/%m/%Y %H:%M") if _e["ts"] and hasattr(_e["ts"], "strftime") else str(_e["ts"] or "")[:16]
+                                        _log_rows.append({
+                                            "Data/Hora": _ts_str,
+                                            "Tipo": "Plano" if _e["data_type"] == "plan" else "Assets",
+                                            "Usuário": _e["username"] or "—",
+                                            "Linhas": _e["row_count"],
+                                            "Origem": (_e["source_info"] or "")[:60],
+                                        })
+                                    st.dataframe(pd.DataFrame(_log_rows), use_container_width=True, hide_index=True)
                     else:
                         st.caption("Sem veículos cadastrados.")
 

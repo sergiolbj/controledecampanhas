@@ -109,6 +109,20 @@ def init_db() -> None:
                     header_row      INTEGER NOT NULL DEFAULT 1,
                     updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
+                CREATE TABLE IF NOT EXISTS ingestion_log (
+                    id           SERIAL PRIMARY KEY,
+                    campaign_id  INTEGER NOT NULL,
+                    vehicle_id   INTEGER NOT NULL,
+                    data_type    TEXT NOT NULL,
+                    username     TEXT NOT NULL DEFAULT '',
+                    row_count    INTEGER NOT NULL DEFAULT 0,
+                    source_info  TEXT NOT NULL DEFAULT '',
+                    ts           TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+            cur.execute("""
+                ALTER TABLE ingestion_cache
+                ADD COLUMN IF NOT EXISTS updated_by TEXT NOT NULL DEFAULT ''
             """)
             
             cur.execute("""
@@ -197,7 +211,8 @@ _PARQUET_MAGIC = b"\x00PQT\x00"  # prefix that identifies parquet-encoded blobs
 
 
 def save_ingestion(campaign_id: int, vehicle_id: int, data_type: str,
-                   df, mapping: dict, source_info: str = "", config_json: str = "{}") -> None:
+                   df, mapping: dict, source_info: str = "", config_json: str = "{}",
+                   username: str = "") -> None:
     import pyarrow as pa
     import pyarrow.parquet as pq
 
@@ -233,21 +248,27 @@ def save_ingestion(campaign_id: int, vehicle_id: int, data_type: str,
     pq.write_table(table, buf)
     blob = _PARQUET_MAGIC + buf.getvalue()
 
+    row_count = len(df)
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute("""
                 INSERT INTO ingestion_cache
-                (campaign_id, vehicle_id, data_type, data_blob, mapping_json, updated_at, source_info, config_json)
-                VALUES (%s,%s,%s,%s,%s,CURRENT_TIMESTAMP,%s,%s)
+                (campaign_id, vehicle_id, data_type, data_blob, mapping_json, updated_at, source_info, config_json, updated_by)
+                VALUES (%s,%s,%s,%s,%s,CURRENT_TIMESTAMP,%s,%s,%s)
                 ON CONFLICT (campaign_id, vehicle_id, data_type)
                 DO UPDATE SET
-                    data_blob = EXCLUDED.data_blob,
+                    data_blob    = EXCLUDED.data_blob,
                     mapping_json = EXCLUDED.mapping_json,
-                    updated_at = CURRENT_TIMESTAMP,
-                    source_info = EXCLUDED.source_info,
-                    config_json = EXCLUDED.config_json
+                    updated_at   = CURRENT_TIMESTAMP,
+                    source_info  = EXCLUDED.source_info,
+                    config_json  = EXCLUDED.config_json,
+                    updated_by   = EXCLUDED.updated_by
             """, (campaign_id, vehicle_id, data_type,
-                  psycopg2.Binary(blob), json.dumps(mapping, default=str), source_info, config_json))
+                  psycopg2.Binary(blob), json.dumps(mapping, default=str), source_info, config_json, username))
+            cur.execute("""
+                INSERT INTO ingestion_log (campaign_id, vehicle_id, data_type, username, row_count, source_info)
+                VALUES (%s,%s,%s,%s,%s,%s)
+            """, (campaign_id, vehicle_id, data_type, username, row_count, source_info))
     st.cache_data.clear()
 
 
@@ -532,6 +553,56 @@ def has_default_password(username: str) -> bool:
                 (username, default_hash),
             )
             return cur.fetchone() is not None
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_ingestion_timestamps(campaign_id: int, vehicle_id: int) -> dict:
+    """Retorna {plan, assets, plan_by, assets_by} com updated_at e updated_by."""
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT data_type, updated_at, updated_by FROM ingestion_cache "
+                "WHERE campaign_id=%s AND vehicle_id=%s",
+                (campaign_id, vehicle_id),
+            )
+            rows = cur.fetchall()
+    result: dict = {"plan": None, "assets": None, "plan_by": "", "assets_by": ""}
+    for r in rows:
+        dtype, ts, by = r[0], r[1], (r[2] if len(r) > 2 else "")
+        result[dtype] = ts
+        result[f"{dtype}_by"] = by or ""
+    return result
+
+
+@st.cache_data(ttl=30, show_spinner=False)
+def get_ingestion_log(campaign_id: int | None = None, vehicle_id: int | None = None, limit: int = 50) -> list[dict]:
+    """Retorna histórico de atualizações de ingestão."""
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            if campaign_id is not None and vehicle_id is not None:
+                cur.execute(
+                    "SELECT campaign_id, vehicle_id, data_type, username, row_count, source_info, ts "
+                    "FROM ingestion_log WHERE campaign_id=%s AND vehicle_id=%s ORDER BY ts DESC LIMIT %s",
+                    (campaign_id, vehicle_id, limit),
+                )
+            elif campaign_id is not None:
+                cur.execute(
+                    "SELECT campaign_id, vehicle_id, data_type, username, row_count, source_info, ts "
+                    "FROM ingestion_log WHERE campaign_id=%s ORDER BY ts DESC LIMIT %s",
+                    (campaign_id, limit),
+                )
+            else:
+                cur.execute(
+                    "SELECT campaign_id, vehicle_id, data_type, username, row_count, source_info, ts "
+                    "FROM ingestion_log ORDER BY ts DESC LIMIT %s",
+                    (limit,),
+                )
+            rows = cur.fetchall()
+    return [
+        {"campaign_id": r[0], "vehicle_id": r[1], "data_type": r[2],
+         "username": r[3], "row_count": r[4], "source_info": r[5], "ts": r[6]}
+        for r in rows
+    ]
 
 
 def logout() -> None:
