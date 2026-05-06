@@ -553,6 +553,10 @@ def main() -> None:
 
         # ── Bloco principal: visualização ──────────────────────────────────
         if st.button("📊 Dashboard", use_container_width=True):
+            for k in ["plan_df", "assets_df", "merged_df", "unmatched_df", "fuzzy_df",
+                      "all_plan_configs", "all_assets_configs", "_cross_sig",
+                      "cfg_campaign_id", "cfg_campaign_name"]:
+                st.session_state.pop(k, None)
             st.session_state["page"] = "📊 Dashboard"
             st.rerun()
 
