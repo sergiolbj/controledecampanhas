@@ -10,6 +10,7 @@ Optional:         SMTP_PORT (default 587), REPORT_FROM (defaults to SMTP_USER)
 from __future__ import annotations
 
 import io
+import json
 import os
 import pickle
 import smtplib
@@ -20,6 +21,10 @@ from email.mime.text import MIMEText
 
 import pandas as pd
 import psycopg2
+
+# data_processor lives next to this file (same repo)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from data_processor import read_file, apply_mapping, normalize_dates  # noqa: E402
 
 # ── DB helpers ────────────────────────────────────────────────────────────────
 
@@ -50,25 +55,76 @@ def get_vehicles(campaign_id: int) -> list[dict]:
             return [{"id": r[0], "name": r[1]} for r in cur.fetchall()]
 
 
+def _fetch_from_sheets(cfg: dict, mapping: dict) -> pd.DataFrame | None:
+    """Re-fetch plan from Google Sheets using saved config + mapping."""
+    url = cfg.get("url")
+    if not url:
+        return None
+    try:
+        df = read_file(
+            "url",
+            url=url,
+            sheet_name=cfg.get("sheet", 0),
+            header_row=cfg.get("header_row", 0),
+        )
+        if df is None or df.empty:
+            return None
+
+        veh_col    = cfg.get("veh_col", "(não usar)")
+        veh_filter = cfg.get("veh_filter", "")
+        if veh_col != "(não usar)" and veh_filter.strip():
+            mask = (
+                df[veh_col].astype(str).str.strip().str.lower()
+                == veh_filter.strip().lower()
+            )
+            df = df[mask].copy()
+        if veh_col != "(não usar)" and veh_col in df.columns:
+            df = df.drop(columns=[veh_col])
+
+        active = {k: v for k, v in mapping.items() if v != "(não mapear)"}
+        df = normalize_dates(apply_mapping(df, active), ["start_date", "end_date"])
+        return df if not df.empty else None
+    except Exception as exc:
+        print(f"      [sheets fallback] erro: {exc}")
+        return None
+
+
 def load_plan(campaign_id: int, vehicle_id: int) -> pd.DataFrame | None:
+    """Load plan from DB cache; falls back to Google Sheets if cache is stale/missing."""
     with _db() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT data_blob FROM ingestion_cache "
+                "SELECT data_blob, mapping_json, config_json FROM ingestion_cache "
                 "WHERE campaign_id=%s AND vehicle_id=%s AND data_type='plan'",
                 (campaign_id, vehicle_id),
             )
             row = cur.fetchone()
+
     if not row:
-        return None
+        return None  # no entry at all — vehicle was never saved
+
+    mapping = json.loads(row[1]) if row[1] else {}
+    cfg     = json.loads(row[2]) if row[2] else {}
+
+    # ── Try the cached pickle first ───────────────────────────────────────────
     try:
         blob = row[0]
         if isinstance(blob, memoryview):
             blob = blob.tobytes()
         df = pickle.loads(blob)
-        return df if isinstance(df, pd.DataFrame) else None
-    except Exception:
-        return None
+        if isinstance(df, pd.DataFrame) and not df.empty:
+            return df
+        print("      [cache] blob vazio ou não-DataFrame")
+    except Exception as exc:
+        print(f"      [cache] falha no unpickle: {type(exc).__name__}: {exc}")
+
+    # ── Fallback: re-fetch from Google Sheets ─────────────────────────────────
+    src = cfg.get("src", "")
+    if "Sheets" in src or "Office" in src:
+        print("      [sheets fallback] tentando re-buscar do Sheets...")
+        return _fetch_from_sheets(cfg, mapping)
+
+    return None
 
 
 # ── Data assembly ─────────────────────────────────────────────────────────────
