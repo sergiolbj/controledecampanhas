@@ -758,7 +758,7 @@ def main() -> None:
 
     # ── Sidebar nav ───────────────────────────────────────────────────────────
     with st.sidebar:
-        st.markdown("## 📊 AdOps Control")
+        st.markdown("## 📊 Campanhas PPG")
         st.caption(f"👤 **{username}** · `{role.upper()}`")
         st.divider()
         if "page" not in st.session_state:
