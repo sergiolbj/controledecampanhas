@@ -1202,7 +1202,7 @@ def main() -> None:
                                               "Anúncio","Fim Plano","Última Veiculação",
                                               "Impressões","Valor Gasto (R$)"] if c in alerts.columns]
                             st.dataframe(
-                                alerts[ac].style.applymap(
+                                alerts[ac].style.map(
                                     lambda _: "background-color:#3d1f00;color:#ffa657",
                                     subset=["Status"] if "Status" in ac else []),
                                 use_container_width=True, height=420, hide_index=True)
@@ -1975,7 +1975,7 @@ def main() -> None:
                 missing_df = pd.DataFrame(missing)
                 missing_df.columns = ["Cliente", "Campanha", "Veículo", "Status"]
                 st.dataframe(
-                    missing_df.style.applymap(
+                    missing_df.style.map(
                         lambda _: "color:#f0883e;font-weight:600",
                         subset=["Status"],
                     ),
@@ -2326,7 +2326,7 @@ def main() -> None:
                     if val >= 50: return "color:#f0883e"
                     return "color:#f85149"
                 st.dataframe(
-                    _cov_df.style.applymap(_color_cov, subset=["Cobertura %"]),
+                    _cov_df.style.map(_color_cov, subset=["Cobertura %"]),
                     use_container_width=True, hide_index=True,
                 )
             st.divider()
