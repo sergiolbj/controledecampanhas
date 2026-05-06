@@ -173,7 +173,7 @@ def delete_session(token: str) -> None:
 
 def login_ui() -> None:
     st.markdown(
-        "<h2 style='text-align:center;padding-top:3rem'>📊 AdOps Control Center</h2>"
+        "<h2 style='text-align:center;padding-top:3rem'>📊 Controle de Campanhas PPG</h2>"
         "<p style='text-align:center;color:#8b949e'>Campaign Management Platform</p>",
         unsafe_allow_html=True,
     )

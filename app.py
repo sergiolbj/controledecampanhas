@@ -44,7 +44,7 @@ from data_processor import (
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="AdOps Control Center",
+    page_title="Controle de Campanhas PPG",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded",

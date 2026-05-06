@@ -474,7 +474,7 @@ def build_html(df: pd.DataFrame, no_data: list[dict] | None = None) -> str:
 
     <!-- Header -->
     <div style="background:#1e293b;padding:20px 32px">
-      <h1 style="margin:0;color:#fff;font-size:18px">📊 AdOps Report Diário</h1>
+      <h1 style="margin:0;color:#fff;font-size:18px">📊 Relatório Diário de Campanhas PPG</h1>
       <p style="margin:4px 0 0;color:#94a3b8;font-size:12px">{today_str}</p>
     </div>
 
@@ -489,7 +489,7 @@ def build_html(df: pd.DataFrame, no_data: list[dict] | None = None) -> str:
     <!-- Footer -->
     <div style="background:#f8fafc;padding:12px 32px;border-top:1px solid #e2e8f0;
                 text-align:center;color:#94a3b8;font-size:11px">
-      AdOps Control Center · gerado automaticamente em {today_str}
+      Controle de Campanhas PPG · gerado automaticamente em {today_str}
     </div>
   </div>
 </body>
@@ -509,7 +509,7 @@ def send_email(html: str) -> None:
     today_str = datetime.now().strftime("%d/%m/%Y")
 
     msg = MIMEMultipart("alternative")
-    msg["Subject"] = f"📊 AdOps Report — {today_str}"
+    msg["Subject"] = f"📊 Relatório de Campanhas PPG — {today_str}"
     msg["From"]    = from_
     msg["To"]      = to
     msg.attach(MIMEText(html, "html", "utf-8"))
