@@ -378,6 +378,215 @@ def gantt_chart(df: pd.DataFrame) -> None:
     st.plotly_chart(fig, use_container_width=True)
 
 
+# ── Duplicate vehicle helper ──────────────────────────────────────────────────
+def _copy_ingestion(
+    src_camp_id: int, src_veh_id: int,
+    dst_camp_id: int, dst_veh_id: int,
+    dtype: str, new_url: str | None,
+    src_cfg: dict, src_map: dict,
+) -> str:
+    """Copy one ingestion_cache entry to a new campaign/vehicle.
+
+    If new_url is given and the source is Sheets-based, re-fetches from the
+    new URL applying the exact same sheet/mapping/filter config.
+    Otherwise copies the existing blob as-is.
+
+    Returns a human-readable summary string.
+    """
+    uses_sheets = "Sheets" in src_cfg.get("src", "") or "Office" in src_cfg.get("src", "")
+
+    if new_url and uses_sheets:
+        cfg = {**src_cfg, "url": new_url}
+        df = read_file(
+            "url", url=new_url,
+            sheet_name=src_cfg.get("sheet", 0),
+            header_row=src_cfg.get("header_row", 0),
+        )
+        if df is None or df.empty:
+            raise ValueError(f"Planilha vazia ou inacessível: {new_url}")
+
+        veh_col    = src_cfg.get("veh_col", "(não usar)")
+        veh_filter = src_cfg.get("veh_filter", "")
+        if veh_col != "(não usar)" and veh_filter.strip():
+            mask = (
+                df[veh_col].astype(str).str.strip().str.lower()
+                == veh_filter.strip().lower()
+            )
+            df = df[mask].copy()
+        if veh_col != "(não usar)" and veh_col in df.columns:
+            df = df.drop(columns=[veh_col])
+
+        active = {k: v for k, v in src_map.items() if v != "(não mapear)"}
+        if dtype == "plan":
+            df = normalize_dates(apply_mapping(df, active), ["start_date", "end_date"])
+        else:
+            df = apply_mapping(df, active)
+
+        save_ingestion(dst_camp_id, dst_veh_id, dtype, df, src_map,
+                       f"Duplicado de camp={src_camp_id} veh={src_veh_id}", json.dumps(cfg))
+        return f"{len(df):,} linhas importadas do novo link"
+    else:
+        # Copy existing blob
+        df_src, map_src, _, src_info, _ = load_ingestion(src_camp_id, src_veh_id, dtype)
+        if df_src is None or df_src.empty:
+            return "sem dados na origem — pulado"
+        save_ingestion(dst_camp_id, dst_veh_id, dtype, df_src, map_src,
+                       f"Duplicado de camp={src_camp_id} veh={src_veh_id}", json.dumps(src_cfg))
+        return f"{len(df_src):,} linhas copiadas"
+
+
+def _duplicate_vehicle_ui(username: str, role: str) -> None:
+    with st.expander("📋 Duplicar configuração de veículo", expanded=False):
+        st.caption(
+            "Copie toda a configuração de um veículo (mapeamento de colunas, aba, filtros) "
+            "para uma nova campanha — troque apenas o link da planilha."
+        )
+
+        all_camps = get_campaigns(username, role)
+        if not all_camps:
+            st.info("Nenhuma campanha disponível.")
+            return
+
+        camp_names = [c["name"] for c in all_camps]
+
+        # ── Origem ────────────────────────────────────────────────────────────
+        st.markdown("**Origem**")
+        c1, c2 = st.columns(2)
+        src_camp_name = c1.selectbox("Campanha", camp_names, key="dup_src_camp")
+        src_camp      = next(c for c in all_camps if c["name"] == src_camp_name)
+        src_vehs      = get_vehicles(src_camp["id"])
+
+        if not src_vehs:
+            st.warning("Nenhum veículo configurado nessa campanha.")
+            return
+
+        src_veh_name = c2.selectbox("Veículo", [v["name"] for v in src_vehs], key="dup_src_veh")
+        src_veh      = next(v for v in src_vehs if v["name"] == src_veh_name)
+
+        _, plan_map, _, _, plan_cfg  = load_ingestion(src_camp["id"], src_veh["id"], "plan")
+        _, ast_map,  _, _, ast_cfg   = load_ingestion(src_camp["id"], src_veh["id"], "assets")
+        src_plan_url   = (plan_cfg  or {}).get("url", "")
+        src_assets_url = (ast_cfg   or {}).get("url", "")
+
+        # ── Destino ───────────────────────────────────────────────────────────
+        st.divider()
+        st.markdown("**Destino**")
+        d1, d2 = st.columns(2)
+
+        use_new = d1.toggle("Criar nova campanha", value=True, key="dup_new_camp_toggle")
+        if use_new:
+            dst_camp_name   = d1.text_input("Nome da nova campanha", key="dup_new_camp_name")
+            dst_client      = d1.text_input(
+                "Cliente", value=src_camp.get("client_name", ""), key="dup_new_client"
+            )
+        else:
+            dst_camp_sel = d1.selectbox("Campanha existente", camp_names, key="dup_exist_camp")
+
+        dst_veh_name = d2.text_input("Nome do veículo", value=src_veh_name, key="dup_dst_veh")
+
+        # ── Novos links ───────────────────────────────────────────────────────
+        st.divider()
+        st.markdown("**Planilhas** — deixe em branco para usar o mesmo link da origem")
+        u1, u2 = st.columns(2)
+
+        def _short(url: str) -> str:
+            return (url[:70] + "…") if len(url) > 70 else url
+
+        new_plan_url = u1.text_input(
+            "URL do Plano",
+            placeholder=_short(src_plan_url) if src_plan_url else "mesmo link da origem",
+            key="dup_new_plan_url",
+        )
+        new_assets_url = u2.text_input(
+            "URL dos Assets",
+            placeholder=_short(src_assets_url) if src_assets_url else "mesmo link da origem",
+            key="dup_new_assets_url",
+        )
+
+        st.divider()
+        if st.button("✅ Criar cópia", type="primary", key="dup_btn_create"):
+            if not dst_veh_name.strip():
+                st.error("Informe o nome do veículo destino.")
+                return
+
+            with st.spinner("Criando cópia..."):
+                try:
+                    # Resolve destination campaign
+                    if use_new:
+                        if not dst_camp_name.strip():
+                            st.error("Informe o nome da nova campanha.")
+                            return
+                        existing = next(
+                            (c for c in all_camps if c["name"] == dst_camp_name.strip()), None
+                        )
+                        dst_camp_id = (
+                            existing["id"] if existing
+                            else create_campaign(dst_camp_name.strip(), dst_client.strip())
+                        )
+                        resolved_camp_name = dst_camp_name.strip()
+                    else:
+                        dst_obj = next(c for c in all_camps if c["name"] == dst_camp_sel)
+                        dst_camp_id        = dst_obj["id"]
+                        resolved_camp_name = dst_obj["name"]
+
+                    # Resolve destination vehicle
+                    dst_vehs     = get_vehicles(dst_camp_id)
+                    existing_veh = next(
+                        (v for v in dst_vehs if v["name"] == dst_veh_name.strip()), None
+                    )
+                    if existing_veh:
+                        dst_veh_id = existing_veh["id"]
+                        st.warning(
+                            f"Veículo '{dst_veh_name}' já existe em '{resolved_camp_name}' "
+                            "— configuração sobrescrita."
+                        )
+                    else:
+                        dst_veh_id = create_vehicle(dst_camp_id, dst_veh_name.strip())
+
+                    # Copy plan
+                    plan_summary = _copy_ingestion(
+                        src_camp["id"], src_veh["id"],
+                        dst_camp_id, dst_veh_id,
+                        "plan",
+                        new_plan_url.strip() or None,
+                        plan_cfg or {}, plan_map or {},
+                    )
+
+                    # Copy assets
+                    assets_summary = _copy_ingestion(
+                        src_camp["id"], src_veh["id"],
+                        dst_camp_id, dst_veh_id,
+                        "assets",
+                        new_assets_url.strip() or None,
+                        ast_cfg or {}, ast_map or {},
+                    )
+
+                    st.success(
+                        f"Cópia criada com sucesso!\n\n"
+                        f"**{resolved_camp_name} › {dst_veh_name.strip()}**\n\n"
+                        f"- Plano: {plan_summary}\n"
+                        f"- Assets: {assets_summary}"
+                    )
+
+                    if st.button(
+                        f"Abrir {dst_veh_name.strip()} →",
+                        key="dup_goto_new",
+                    ):
+                        st.session_state.update(
+                            cfg_campaign_id=dst_camp_id,
+                            cfg_campaign_name=resolved_camp_name,
+                            cfg_vehicle_id=dst_veh_id,
+                            cfg_vehicle_name=dst_veh_name.strip(),
+                        )
+                        for k in ["plan_df", "assets_df", "merged_df",
+                                  "unmatched_df", "fuzzy_df", "_cross_sig"]:
+                            st.session_state.pop(k, None)
+                        st.rerun()
+
+                except Exception as exc:
+                    st.error(f"Erro ao criar cópia: {exc}")
+
+
 # ── Wizard helpers ────────────────────────────────────────────────────────────
 def _step_bar(current: int) -> None:
     labels = ["1 · Campanha", "2 · Veículo", "3 · Mapeamento"]
@@ -605,6 +814,8 @@ def main() -> None:
         if role not in ["admin", "editor"]:
             st.warning("🔒 Somente administradores ou editores podem ingerir dados.")
             return
+
+        _duplicate_vehicle_ui(username, role)
 
         # ── Wizard step indicator ─────────────────────────────────────────────
         has_campaign = "cfg_campaign_id" in st.session_state
