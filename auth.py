@@ -488,6 +488,52 @@ def create_vehicle(campaign_id: int, name: str) -> int:
     return vid
 
 
+def rename_campaign(campaign_id: int, new_name: str) -> None:
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE campaigns SET name=%s WHERE id=%s", (new_name.strip(), campaign_id))
+    st.cache_data.clear()
+
+
+def delete_campaign(campaign_id: int) -> None:
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM campaigns WHERE id=%s", (campaign_id,))
+    st.cache_data.clear()
+
+
+def rename_vehicle(vehicle_id: int, new_name: str) -> None:
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE vehicles SET name=%s WHERE id=%s", (new_name.strip(), vehicle_id))
+    st.cache_data.clear()
+
+
+def delete_vehicle(vehicle_id: int) -> None:
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM vehicles WHERE id=%s", (vehicle_id,))
+    st.cache_data.clear()
+
+
+def has_default_password(username: str) -> bool:
+    """Retorna True se o usuário ainda usa a senha padrão original."""
+    default_hashes = {
+        "admin":  hashlib.sha256(b"admin123").hexdigest(),
+        "viewer": hashlib.sha256(b"viewer123").hexdigest(),
+    }
+    default_hash = default_hashes.get(username)
+    if not default_hash:
+        return False
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT 1 FROM users WHERE username=%s AND password_hash=%s",
+                (username, default_hash),
+            )
+            return cur.fetchone() is not None
+
+
 def logout() -> None:
     for k in list(st.session_state.keys()):
         del st.session_state[k]

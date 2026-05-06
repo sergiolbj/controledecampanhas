@@ -9,12 +9,14 @@ import streamlit as st
 
 from auth import (
     get_db, init_db, login_ui, logout,
-    get_campaigns, create_campaign, update_campaign_client, get_vehicles, create_vehicle,
+    get_campaigns, create_campaign, update_campaign_client, rename_campaign, delete_campaign,
+    get_vehicles, create_vehicle, rename_vehicle, delete_vehicle,
     save_ingestion, load_ingestion, save_user_state, load_user_state,
     get_users, add_user, update_user, delete_user,
     get_clients, add_client, delete_client, rename_client, get_user_clients, set_user_clients,
     create_session, validate_session, delete_session,
     save_campaign_sheets_config, load_campaign_sheets_config,
+    has_default_password,
 )
 
 COOKIE_NAME = "adops_session"
@@ -767,43 +769,45 @@ def main() -> None:
     with st.sidebar:
         st.markdown("## 📊 Campanhas PPG")
         st.caption(f"👤 **{username}** · `{role.upper()}`")
+
+        # Aviso de senha padrão (item 3)
+        if has_default_password(username):
+            st.warning("⚠️ Você está usando a senha padrão. Altere-a em **Usuários**.", icon="🔒")
+
         st.divider()
         if "page" not in st.session_state:
             st.session_state["page"] = "📊 Dashboard"
 
-        # ── Bloco principal: visualização ──────────────────────────────────
-        if st.button("📊 Dashboard", use_container_width=True):
-            for k in ["plan_df", "assets_df", "merged_df", "unmatched_df", "fuzzy_df",
-                      "all_plan_configs", "all_assets_configs", "_cross_sig",
-                      "cfg_campaign_id", "cfg_campaign_name"]:
-                st.session_state.pop(k, None)
-            st.session_state["page"] = "📊 Dashboard"
-            st.rerun()
+        page = st.session_state["page"]
 
-        if st.button("📡 Campanhas em Veiculação", use_container_width=True):
-            st.session_state["page"] = "📡 Campanhas em Veiculação"
-            st.rerun()
+        # ── Bloco principal: visualização (item 4: type="primary" na página ativa) ──
+        def _nav(label: str, target: str, clear_keys: list[str] | None = None):
+            is_active = page == target
+            if st.button(label, use_container_width=True,
+                         type="primary" if is_active else "secondary"):
+                if clear_keys:
+                    for k in clear_keys:
+                        st.session_state.pop(k, None)
+                st.session_state["page"] = target
+                st.rerun()
+
+        _nav("📊 Dashboard", "📊 Dashboard",
+             ["plan_df", "assets_df", "merged_df", "unmatched_df", "fuzzy_df",
+              "all_plan_configs", "all_assets_configs", "_cross_sig",
+              "cfg_campaign_id", "cfg_campaign_name"])
+        _nav("📡 Campanhas em Veiculação", "📡 Campanhas em Veiculação")
 
         # ── Bloco de configuração (admin/editor) ──────────────────────────
         if role in ["admin", "editor"]:
             st.divider()
             st.caption("⚙️ CONFIGURAÇÃO")
+            _nav("📥 Mapeamento & Cruzamento", "📥 Mapeamento & Cruzamento",
+                 ["cfg_campaign_id", "cfg_campaign_name", "cfg_vehicle_id", "cfg_vehicle_name",
+                  "plan_df", "assets_df", "merged_df", "unmatched_df", "fuzzy_df"])
+            _nav("⚙️ Gerenciar Campanhas", "⚙️ Gerenciar Campanhas")
+            _nav("🏢 Clientes", "🏢 Clientes")
+            _nav("👥 Usuários", "👥 Usuários")
 
-            if st.button("📥 Mapeamento & Cruzamento", use_container_width=True):
-                st.session_state["page"] = "📥 Mapeamento & Cruzamento"
-                for k in ["cfg_campaign_id", "cfg_campaign_name", "cfg_vehicle_id", "cfg_vehicle_name",
-                          "plan_df", "assets_df", "merged_df", "unmatched_df", "fuzzy_df"]:
-                    st.session_state.pop(k, None)
-                st.rerun()
-
-            if st.button("🏢 Clientes", use_container_width=True):
-                st.session_state["page"] = "🏢 Clientes"
-                st.rerun()
-            if st.button("👥 Usuários", use_container_width=True):
-                st.session_state["page"] = "👥 Usuários"
-                st.rerun()
-
-        page = st.session_state["page"]
         st.divider()
         if st.button("⏏ Sair", use_container_width=True):
             token = st.session_state.get("_session_token")
@@ -822,14 +826,17 @@ def main() -> None:
             st.warning("🔒 Somente administradores ou editores podem ingerir dados.")
             return
 
-        _duplicate_vehicle_ui(username, role)
-
         # ── Wizard step indicator ─────────────────────────────────────────────
         has_campaign = "cfg_campaign_id" in st.session_state
         has_vehicle  = "cfg_vehicle_id"  in st.session_state
         step = 3 if (has_campaign and has_vehicle) else (2 if has_campaign else 1)
 
         _step_bar(step)
+
+        # ── Duplicar veículo (item 6: visível logo abaixo do step bar) ────────
+        if step == 1:
+            _duplicate_vehicle_ui(username, role)
+
         st.divider()
 
         # ── Step 1 — Campanha ─────────────────────────────────────────────────
@@ -865,10 +872,26 @@ def main() -> None:
             b1, b2 = st.columns([5, 1])
             b1.caption(f"📢 **{camp_name}** › 📺 **{veh_name}**")
             if b2.button("← Alterar veículo", key="back_veh"):
-                for k in ["cfg_vehicle_id", "cfg_vehicle_name",
-                           "plan_df", "assets_df", "merged_df", "unmatched_df", "fuzzy_df"]:
-                    st.session_state.pop(k, None)
-                st.rerun()
+                has_data = "plan_df" in st.session_state or "assets_df" in st.session_state
+                if has_data:
+                    st.session_state["_confirm_back_veh"] = True
+                else:
+                    for k in ["cfg_vehicle_id", "cfg_vehicle_name",
+                               "plan_df", "assets_df", "merged_df", "unmatched_df", "fuzzy_df"]:
+                        st.session_state.pop(k, None)
+                    st.rerun()
+
+            if st.session_state.get("_confirm_back_veh"):
+                st.warning("⚠️ Ao voltar, os dados carregados serão descartados. Deseja continuar?")
+                conf1, conf2 = st.columns(2)
+                if conf1.button("✅ Sim, voltar", key="confirm_back_yes"):
+                    for k in ["cfg_vehicle_id", "cfg_vehicle_name", "_confirm_back_veh",
+                               "plan_df", "assets_df", "merged_df", "unmatched_df", "fuzzy_df"]:
+                        st.session_state.pop(k, None)
+                    st.rerun()
+                if conf2.button("❌ Cancelar", key="confirm_back_no"):
+                    st.session_state.pop("_confirm_back_veh", None)
+                    st.rerun()
 
             tab_plan, tab_assets = st.tabs(["📋 Plano de Conteúdo", "🎨 Base de Assets"])
 
@@ -880,6 +903,24 @@ def main() -> None:
                 )
                 if plan_df is not None:
                     if st.button("✅ Confirmar Plano", type="primary", key="confirm_plan"):
+                        active = {k: v for k, v in plan_map.items() if v != "(não mapear)"}
+                        missing_fields = []
+                        if "ad_name" not in active:
+                            missing_fields.append("Nome do Anúncio")
+                        if "start_date" not in active:
+                            missing_fields.append("Data de Início")
+                        if "end_date" not in active:
+                            missing_fields.append("Data de Fim")
+                        if missing_fields:
+                            st.warning(
+                                f"⚠️ Campo(s) importante(s) não mapeado(s): **{', '.join(missing_fields)}**. "
+                                "O cruzamento e o relatório podem ficar incompletos. Confirme mesmo assim?"
+                            )
+                            st.session_state["_plan_confirm_anyway"] = True
+                        else:
+                            st.session_state["_plan_confirm_anyway"] = True
+
+                    if st.session_state.pop("_plan_confirm_anyway", False):
                         mapped = plan_df.copy()
                         if veh_col != "(não usar)" and veh_filter.strip():
                             mask = (
@@ -900,7 +941,7 @@ def main() -> None:
                             st.session_state["cfg_vehicle_id"],
                             "plan", mapped, plan_map, plan_source, json.dumps(plan_config)
                         )
-                        st.success(f"Plano confirmado e salvo: {len(mapped):,} registros.")
+                        st.success(f"✅ Plano confirmado e salvo: {len(mapped):,} registros.")
 
             with tab_assets:
                 if st.session_state.get("assets_source"):
@@ -910,6 +951,22 @@ def main() -> None:
                 )
                 if assets_df is not None:
                     if st.button("✅ Confirmar Assets", type="primary", key="confirm_assets"):
+                        active = {k: v for k, v in assets_map.items() if v != "(não mapear)"}
+                        missing_fields_a = []
+                        if "asset_id" not in active:
+                            missing_fields_a.append("ID do Asset")
+                        if "asset_link" not in active:
+                            missing_fields_a.append("Link do Asset")
+                        if missing_fields_a:
+                            st.warning(
+                                f"⚠️ Campo(s) importante(s) não mapeado(s): **{', '.join(missing_fields_a)}**. "
+                                "O cruzamento pode ficar incompleto. Confirme mesmo assim?"
+                            )
+                            st.session_state["_assets_confirm_anyway"] = True
+                        else:
+                            st.session_state["_assets_confirm_anyway"] = True
+
+                    if st.session_state.pop("_assets_confirm_anyway", False):
                         active = {k: v for k, v in assets_map.items() if v != "(não mapear)"}
                         mapped = apply_mapping(assets_df, active)
                         st.session_state["assets_df"]      = mapped
@@ -1076,34 +1133,39 @@ def main() -> None:
             d2.write("")
             d2.write("")
             if d2.button("🔄 Sincronizar Sheets", use_container_width=True):
-                with st.spinner("Sincronizando com Google Sheets (todos os veículos)..."):
-                    try:
-                        def _sync_dtype_list(dtype, configs):
-                            all_dfs = []
-                            new_configs = []
-                            for c_dict in configs:
-                                veh_id   = c_dict.get("veh_id")
-                                veh_name = c_dict.get("veh_name", "Desconhecido")
-                                cfg      = c_dict.get("cfg", {})
-                                mapping  = c_dict.get("mapping", {})
-                                src_info = c_dict.get("src_info", "")
-                                c_id     = c_dict.get("camp_id") or st.session_state.get("cfg_campaign_id")
+                sync_log = st.empty()
+                sync_errors: list[str] = []
+                try:
+                    def _sync_dtype_list(dtype, configs):
+                        all_dfs = []
+                        new_configs = []
+                        dtype_label = "Plano" if dtype == "plan" else "Assets"
+                        for idx_s, c_dict in enumerate(configs):
+                            veh_id   = c_dict.get("veh_id")
+                            veh_name = c_dict.get("veh_name", "Desconhecido")
+                            cfg      = c_dict.get("cfg", {})
+                            mapping  = c_dict.get("mapping", {})
+                            src_info = c_dict.get("src_info", "")
+                            c_id     = c_dict.get("camp_id") or st.session_state.get("cfg_campaign_id")
 
-                                if not veh_id:
-                                    continue
+                            if not veh_id:
+                                continue
 
-                                if not cfg or cfg.get("src") != "Link (Google Sheets / Office 365)":
-                                    df, _, _, _, _ = load_ingestion(c_id, veh_id, dtype)
-                                    if df is not None and not df.empty:
-                                        df = df.copy()
-                                        df["vehicle"] = veh_name
-                                        if dtype == "plan":
-                                            df["sys_vehicle"]  = veh_name
-                                            df["sys_campaign"] = c_dict.get("camp_name", "")
-                                        all_dfs.append(df)
-                                    new_configs.append(c_dict)
-                                    continue
+                            sync_log.info(f"🔄 {dtype_label} · {idx_s+1}/{len(configs)} · **{veh_name}**…")
 
+                            if not cfg or cfg.get("src") != "Link (Google Sheets / Office 365)":
+                                df, _, _, _, _ = load_ingestion(c_id, veh_id, dtype)
+                                if df is not None and not df.empty:
+                                    df = df.copy()
+                                    df["vehicle"] = veh_name
+                                    if dtype == "plan":
+                                        df["sys_vehicle"]  = veh_name
+                                        df["sys_campaign"] = c_dict.get("camp_name", "")
+                                    all_dfs.append(df)
+                                new_configs.append(c_dict)
+                                continue
+
+                            try:
                                 from data_processor import read_file, apply_mapping, normalize_dates
                                 df = read_file("url", url=cfg["url"], sheet_name=cfg.get("sheet", 0), header_row=cfg.get("header_row", 0))
                                 if dtype == "plan":
@@ -1124,26 +1186,35 @@ def main() -> None:
                                     df["sys_vehicle"]  = veh_name
                                     df["sys_campaign"] = c_dict.get("camp_name", "")
 
-                                # Only persist and use result if it has actual rows
                                 if not df.empty:
                                     save_ingestion(c_id, veh_id, dtype, df, mapping, src_info, json.dumps(cfg))
                                     all_dfs.append(df)
                                 new_configs.append(c_dict)
+                            except Exception as e_veh:
+                                sync_errors.append(f"❌ {dtype_label} · **{veh_name}**: {e_veh}")
+                                new_configs.append(c_dict)
 
-                            if all_dfs:
-                                st.session_state[f"{dtype}_df"] = pd.concat(all_dfs, ignore_index=True)
-                                st.session_state[f"all_{dtype}_configs"] = new_configs
+                        if all_dfs:
+                            st.session_state[f"{dtype}_df"] = pd.concat(all_dfs, ignore_index=True)
+                            st.session_state[f"all_{dtype}_configs"] = new_configs
 
-                        if sync_p: _sync_dtype_list("plan", sync_p)
-                        if sync_a: _sync_dtype_list("assets", sync_a)
+                    if sync_p: _sync_dtype_list("plan", sync_p)
+                    if sync_a: _sync_dtype_list("assets", sync_a)
 
-                        for k in ["merged_df", "unmatched_df", "fuzzy_df", "_cross_sig"]:
-                            st.session_state.pop(k, None)
+                    for k in ["merged_df", "unmatched_df", "fuzzy_df", "_cross_sig"]:
+                        st.session_state.pop(k, None)
 
+                    sync_log.empty()
+                    if sync_errors:
+                        for err in sync_errors:
+                            st.warning(err)
+                        st.warning(f"Sincronização concluída com {len(sync_errors)} erro(s).")
+                    else:
                         st.success("Sincronizado com sucesso!")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Erro na sincronização: {e}")
+                    st.rerun()
+                except Exception as e:
+                    sync_log.empty()
+                    st.error(f"Erro na sincronização: {e}")
 
         base = st.session_state.get("merged_df")
         if base is None:
@@ -1265,6 +1336,12 @@ def main() -> None:
             sel_vehicle    = f4.selectbox("Veículo",  _opts(_veh_col),        key="f_veh")
             sel_vstatus    = f5.selectbox("Status",   _opts("veiculacao_status"), key="f_sts")
 
+            sel_search_dash = st.text_input(
+                "🔍 Buscar anúncio / grupo / campanha",
+                placeholder="Digite para filtrar por texto…",
+                key="f_search_dash",
+            )
+
         filtered = base.copy()
         for col, sel in [
             ("sys_client",          sel_client),
@@ -1275,6 +1352,15 @@ def main() -> None:
         ]:
             if sel != "(Todos)" and col in filtered.columns:
                 filtered = filtered[filtered[col].astype(str) == sel]
+
+        if sel_search_dash.strip():
+            _q = sel_search_dash.strip().lower()
+            _text_cols = [c for c in ["ad_name", "ad_group", "campaign_name", "sys_campaign"] if c in filtered.columns]
+            if _text_cols:
+                _mask = filtered[_text_cols[0]].astype(str).str.lower().str.contains(_q, na=False)
+                for _tc in _text_cols[1:]:
+                    _mask = _mask | filtered[_tc].astype(str).str.lower().str.contains(_q, na=False)
+                filtered = filtered[_mask]
 
         st.caption(f"Exibindo **{len(filtered):,}** de **{len(base):,}** registros")
 
@@ -1521,7 +1607,22 @@ def main() -> None:
         # ── Load campaign data ────────────────────────────────────────────────
         cfg = load_campaign_sheets_config()
         if not cfg:
-            st.info("A planilha do Google Sheets ainda não foi configurada. Solicite a um administrador.")
+            st.info("📋 A planilha do Google Sheets ainda não foi configurada. Solicite a um administrador.")
+            st.divider()
+            st.subheader("📢 Campanhas cadastradas no sistema")
+            st.caption("Exibindo campanhas registradas no módulo de Mapeamento enquanto a planilha não é configurada.")
+            _fb_camps = get_campaigns(username=username, role=role)
+            if not _fb_camps:
+                st.warning("Nenhuma campanha cadastrada ainda.")
+            else:
+                for _fc in _fb_camps:
+                    _fvehs = get_vehicles(_fc["id"])
+                    _vnames = ", ".join(v["name"] for v in _fvehs) if _fvehs else "—"
+                    _cli = _fc.get("client_name") or "—"
+                    st.markdown(
+                        f"**{_fc['name']}** · 👤 {_cli} · 📺 {_vnames}"
+                    )
+                    st.markdown("---")
             return
 
         # Sync button
@@ -1842,6 +1943,95 @@ def main() -> None:
         )
 
     # ═══════════════════════════════════════════════════════════════════════════
+    #  PAGE — GERENCIAR CAMPANHAS (admin/editor)
+    # ═══════════════════════════════════════════════════════════════════════════
+    elif page == "⚙️ Gerenciar Campanhas":
+        st.title("⚙️ Gerenciar Campanhas e Veículos")
+
+        if role not in ["admin", "editor"]:
+            st.warning("🔒 Acesso negado.")
+            return
+
+        all_camps = get_campaigns(role="admin")
+        if not all_camps:
+            st.info("Nenhuma campanha cadastrada.")
+        else:
+            for camp in all_camps:
+                cid   = camp["id"]
+                cname = camp["name"]
+                ccli  = camp.get("client_name", "") or "—"
+                vehs  = get_vehicles(cid)
+
+                with st.expander(f"📢 **{cname}**  ·  👤 {ccli}  ·  {len(vehs)} veículo(s)", expanded=False):
+
+                    # ── Renomear campanha ──────────────────────────────────
+                    rc1, rc2 = st.columns([5, 1])
+                    new_cname = rc1.text_input("Renomear campanha", value=cname, key=f"ren_camp_{cid}")
+                    rc2.write(""); rc2.write("")
+                    if rc2.button("💾", key=f"save_camp_{cid}", help="Salvar novo nome"):
+                        if new_cname.strip() and new_cname.strip() != cname:
+                            try:
+                                rename_campaign(cid, new_cname.strip())
+                                st.success(f"Renomeada para **{new_cname.strip()}**")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Erro: {e}")
+
+                    # ── Excluir campanha ───────────────────────────────────
+                    if st.button("🗑 Excluir campanha", key=f"del_camp_btn_{cid}"):
+                        st.session_state[f"confirm_del_camp_{cid}"] = True
+
+                    if st.session_state.get(f"confirm_del_camp_{cid}"):
+                        st.error(
+                            f"⚠️ Excluir **{cname}** e todos os seus {len(vehs)} veículo(s)? "
+                            "Todos os dados de plano e assets serão perdidos. Não pode ser desfeito."
+                        )
+                        dc1, dc2 = st.columns(2)
+                        if dc1.button("✅ Sim, excluir tudo", key=f"confirm_yes_camp_{cid}", type="primary"):
+                            delete_campaign(cid)
+                            st.session_state.pop(f"confirm_del_camp_{cid}", None)
+                            st.rerun()
+                        if dc2.button("❌ Cancelar", key=f"confirm_no_camp_{cid}"):
+                            st.session_state.pop(f"confirm_del_camp_{cid}", None)
+                            st.rerun()
+
+                    # ── Veículos ───────────────────────────────────────────
+                    if vehs:
+                        st.markdown("**Veículos**")
+                        for v in vehs:
+                            vid   = v["id"]
+                            vname = v["name"]
+                            vc1, vc2, vc3 = st.columns([5, 1, 1])
+                            new_vname = vc1.text_input(
+                                "", value=vname, key=f"ren_veh_{vid}",
+                                label_visibility="collapsed"
+                            )
+                            vc2.write("")
+                            if vc2.button("💾", key=f"save_veh_{vid}", help="Salvar novo nome"):
+                                if new_vname.strip() and new_vname.strip() != vname:
+                                    try:
+                                        rename_vehicle(vid, new_vname.strip())
+                                        st.success(f"Veículo renomeado para **{new_vname.strip()}**")
+                                        st.rerun()
+                                    except Exception as e:
+                                        st.error(f"Erro: {e}")
+                            if vc3.button("🗑", key=f"del_veh_btn_{vid}", help="Excluir veículo"):
+                                st.session_state[f"confirm_del_veh_{vid}"] = True
+
+                            if st.session_state.get(f"confirm_del_veh_{vid}"):
+                                st.warning(f"Excluir veículo **{vname}** e seus dados?")
+                                dv1, dv2 = st.columns(2)
+                                if dv1.button("✅ Sim", key=f"confirm_yes_veh_{vid}", type="primary"):
+                                    delete_vehicle(vid)
+                                    st.session_state.pop(f"confirm_del_veh_{vid}", None)
+                                    st.rerun()
+                                if dv2.button("❌ Cancelar", key=f"confirm_no_veh_{vid}"):
+                                    st.session_state.pop(f"confirm_del_veh_{vid}", None)
+                                    st.rerun()
+                    else:
+                        st.caption("Sem veículos cadastrados.")
+
+    # ═══════════════════════════════════════════════════════════════════════════
     #  PAGE 3 — CLIENTES (admin only)
     # ═══════════════════════════════════════════════════════════════════════════
     elif page == "🏢 Clientes":
@@ -1882,18 +2072,32 @@ def main() -> None:
                     cc1.markdown(f"**{c}**")
                     qtd = camp_counts.get(c, 0)
                     cc1.caption(f"{qtd} campanha(s) atrelada(s)")
-                    
+
                     if cc2.button("✏️ Renomear", key=f"ren_cli_{c}"):
                         st.session_state[f"edit_cli_{c}"] = not st.session_state.get(f"edit_cli_{c}", False)
-                        
+                        st.session_state.pop(f"confirm_del_cli_{c}", None)
+
                     if cc3.button("🗑 Excluir", key=f"del_cli_{c}"):
-                        delete_client(c)
-                        st.rerun()
-                        
+                        st.session_state[f"confirm_del_cli_{c}"] = True
+                        st.session_state.pop(f"edit_cli_{c}", None)
+
+                    # Confirmação de exclusão
+                    if st.session_state.get(f"confirm_del_cli_{c}"):
+                        st.warning(
+                            f"⚠️ Excluir **{c}**? Isso desvincula {qtd} campanha(s). Não pode ser desfeito."
+                        )
+                        dc1, dc2 = st.columns(2)
+                        if dc1.button("✅ Sim, excluir", key=f"confirm_yes_cli_{c}", type="primary"):
+                            delete_client(c)
+                            st.rerun()
+                        if dc2.button("❌ Cancelar", key=f"confirm_no_cli_{c}"):
+                            st.session_state.pop(f"confirm_del_cli_{c}", None)
+                            st.rerun()
+
                     if st.session_state.get(f"edit_cli_{c}", False):
                         rc1, rc2 = st.columns([6, 2])
-                        novo_nome = rc1.text_input("Novo nome para o cliente:", value=c, key=f"new_name_{c}")
-                        if rc2.button("Salvar alteração", key=f"save_ren_{c}"):
+                        novo_nome = rc1.text_input("Novo nome:", value=c, key=f"new_name_{c}")
+                        if rc2.button("Salvar", key=f"save_ren_{c}"):
                             if novo_nome.strip() and novo_nome.strip() != c:
                                 rename_client(c, novo_nome.strip())
                                 st.rerun()
