@@ -134,6 +134,14 @@ def init_db() -> None:
                 ALTER TABLE ingestion_cache
                 ADD COLUMN IF NOT EXISTS updated_by TEXT NOT NULL DEFAULT ''
             """)
+            cur.execute("""
+                ALTER TABLE ingestion_log
+                ADD COLUMN IF NOT EXISTS data_blob BYTEA
+            """)
+            cur.execute("""
+                ALTER TABLE ingestion_log
+                ADD COLUMN IF NOT EXISTS mapping_json TEXT NOT NULL DEFAULT '{}'
+            """)
             
             cur.execute("""
                 INSERT INTO users (username, password_hash, role) 
@@ -276,9 +284,11 @@ def save_ingestion(campaign_id: int, vehicle_id: int, data_type: str,
             """, (campaign_id, vehicle_id, data_type,
                   psycopg2.Binary(blob), json.dumps(mapping, default=str), source_info, config_json, username))
             cur.execute("""
-                INSERT INTO ingestion_log (campaign_id, vehicle_id, data_type, username, row_count, source_info)
-                VALUES (%s,%s,%s,%s,%s,%s)
-            """, (campaign_id, vehicle_id, data_type, username, row_count, source_info))
+                INSERT INTO ingestion_log
+                (campaign_id, vehicle_id, data_type, username, row_count, source_info, data_blob, mapping_json)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+            """, (campaign_id, vehicle_id, data_type, username, row_count, source_info,
+                  psycopg2.Binary(blob), json.dumps(mapping, default=str)))
     st.cache_data.clear()
 
 
@@ -563,6 +573,74 @@ def has_default_password(username: str) -> bool:
                 (username, default_hash),
             )
             return cur.fetchone() is not None
+
+
+def clear_campaign_data(campaign_id: int) -> int:
+    """Apaga todos os registros de ingestion_cache de uma campanha. Retorna nº de linhas removidas."""
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM ingestion_cache WHERE campaign_id=%s",
+                (campaign_id,),
+            )
+            count = cur.rowcount
+    st.cache_data.clear()
+    return count
+
+
+def restore_ingestion_from_log(log_id: int) -> None:
+    """Restaura um blob de ingestion_log de volta ao ingestion_cache."""
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT campaign_id, vehicle_id, data_type, data_blob, mapping_json, source_info "
+                "FROM ingestion_log WHERE id=%s",
+                (log_id,),
+            )
+            row = cur.fetchone()
+    if not row:
+        raise ValueError(f"Log {log_id} não encontrado.")
+    campaign_id, vehicle_id, data_type, blob, mapping_json_str, source_info = row
+    if blob is None:
+        raise ValueError("Esta versão não tem blob salvo (ingestões antigas não têm snapshot).")
+    blob_bytes = bytes(blob) if isinstance(blob, memoryview) else blob
+    mapping = json.loads(mapping_json_str) if mapping_json_str else {}
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO ingestion_cache
+                (campaign_id, vehicle_id, data_type, data_blob, mapping_json,
+                 updated_at, source_info, config_json, updated_by)
+                VALUES (%s,%s,%s,%s,%s,CURRENT_TIMESTAMP,%s,'{}','rollback')
+                ON CONFLICT (campaign_id, vehicle_id, data_type) DO UPDATE SET
+                    data_blob    = EXCLUDED.data_blob,
+                    mapping_json = EXCLUDED.mapping_json,
+                    updated_at   = CURRENT_TIMESTAMP,
+                    source_info  = EXCLUDED.source_info,
+                    updated_by   = EXCLUDED.updated_by
+            """, (campaign_id, vehicle_id, data_type,
+                  psycopg2.Binary(blob_bytes), json.dumps(mapping, default=str),
+                  f"[rollback de log_id={log_id}] {source_info}"))
+    st.cache_data.clear()
+
+
+def change_own_password(username: str, current_pw: str, new_pw: str) -> bool:
+    """Troca a senha do usuário se current_pw estiver correta. Retorna True se OK."""
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT 1 FROM users WHERE username=%s AND password_hash=%s",
+                (username, _hash(current_pw)),
+            )
+            if not cur.fetchone():
+                return False
+            cur.execute(
+                "UPDATE users SET password_hash=%s WHERE username=%s",
+                (_hash(new_pw), username),
+            )
+    st.cache_data.clear()
+    return True
 
 
 @st.cache_data(ttl=60, show_spinner=False)

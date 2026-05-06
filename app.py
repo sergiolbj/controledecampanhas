@@ -18,7 +18,8 @@ from auth import (
     save_campaign_sheets_config, load_campaign_sheets_config,
     has_default_password, get_ingestion_timestamps, get_ingestion_log,
     get_alert_configs, save_alert_config, update_alert_config, delete_alert_config,
-    get_mapping_coverage,
+    get_mapping_coverage, clear_campaign_data, restore_ingestion_from_log,
+    change_own_password,
 )
 
 COOKIE_NAME = "adops_session"
@@ -801,7 +802,26 @@ def main() -> None:
 
         # Aviso de senha padrão (item 3)
         if has_default_password(username):
-            st.warning("⚠️ Você está usando a senha padrão. Altere-a em **Usuários**.", icon="🔒")
+            st.warning("⚠️ Você está usando a senha padrão. Altere-a abaixo.", icon="🔒")
+
+        # ── Item 25: troca de senha ───────────────────────────────────────
+        with st.expander("🔑 Minha Conta", expanded=False):
+            st.caption(f"Usuário: **{username}** · Perfil: `{role.upper()}`")
+            _pw_cur  = st.text_input("Senha atual",       type="password", key="pw_cur")
+            _pw_new  = st.text_input("Nova senha",        type="password", key="pw_new")
+            _pw_conf = st.text_input("Confirmar nova senha", type="password", key="pw_conf")
+            if st.button("Alterar senha", key="pw_change"):
+                if not _pw_cur or not _pw_new:
+                    st.warning("Preencha todos os campos.")
+                elif _pw_new != _pw_conf:
+                    st.error("As novas senhas não coincidem.")
+                elif len(_pw_new) < 6:
+                    st.warning("A nova senha deve ter pelo menos 6 caracteres.")
+                else:
+                    if change_own_password(username, _pw_cur, _pw_new):
+                        st.success("Senha alterada com sucesso!")
+                    else:
+                        st.error("Senha atual incorreta.")
 
         st.divider()
         if "page" not in st.session_state:
@@ -825,6 +845,7 @@ def main() -> None:
               "all_plan_configs", "all_assets_configs", "_cross_sig",
               "cfg_campaign_id", "cfg_campaign_name"])
         _nav("📡 Campanhas em Veiculação", "📡 Campanhas em Veiculação")
+        _nav("📄 Relatório", "📄 Relatório")
 
         # ── Bloco de configuração (admin/editor) ──────────────────────────
         if role in ["admin", "editor"]:
@@ -1208,89 +1229,125 @@ def main() -> None:
             d2.write("")
             d2.write("")
             if d2.button("🔄 Sincronizar Sheets", use_container_width=True):
+                # ── Fase 1: busca dados novos sem salvar (para diff) ──────
                 sync_log = st.empty()
                 sync_errors: list[str] = []
+                _preview_data: dict = {}  # {dtype: {veh_id: {"old": n, "new": n, "df": df, ...}}}
+
+                def _fetch_new(dtype, configs):
+                    dtype_label = "Plano" if dtype == "plan" else "Assets"
+                    entries = []
+                    for idx_s, c_dict in enumerate(configs):
+                        veh_id   = c_dict.get("veh_id")
+                        veh_name = c_dict.get("veh_name", "Desconhecido")
+                        cfg      = c_dict.get("cfg", {})
+                        mapping  = c_dict.get("mapping", {})
+                        src_info = c_dict.get("src_info", "")
+                        c_id     = c_dict.get("camp_id") or st.session_state.get("cfg_campaign_id")
+                        if not veh_id:
+                            continue
+                        sync_log.info(f"🔄 Buscando {dtype_label} · {idx_s+1}/{len(configs)} · **{veh_name}**…")
+                        old_df, _, _, _, _ = load_ingestion(c_id, veh_id, dtype)
+                        old_n = len(old_df) if old_df is not None else 0
+
+                        if not cfg or cfg.get("src") != "Link (Google Sheets / Office 365)":
+                            entries.append({"c_dict": c_dict, "c_id": c_id, "veh_id": veh_id,
+                                            "veh_name": veh_name, "df": old_df, "old_n": old_n,
+                                            "sheets": False, "dtype": dtype})
+                            continue
+                        try:
+                            df = read_file("url", url=cfg["url"], sheet_name=cfg.get("sheet", 0),
+                                           header_row=cfg.get("header_row", 0))
+                            if dtype == "plan":
+                                veh_col    = cfg.get("veh_col", "(não usar)")
+                                veh_filter = cfg.get("veh_filter", "")
+                                if veh_col != "(não usar)" and veh_filter.strip():
+                                    df = df[df[veh_col].astype(str).str.strip().str.lower() == veh_filter.strip().lower()].copy()
+                                if veh_col != "(não usar)" and veh_col in df.columns:
+                                    df = df.drop(columns=[veh_col])
+                                active = {k: v for k, v in mapping.items() if v != "(não mapear)"}
+                                df = normalize_dates(apply_mapping(df, active), ["start_date", "end_date"])
+                            else:
+                                active = {k: v for k, v in mapping.items() if v != "(não mapear)"}
+                                df = apply_mapping(df, active)
+                            df["vehicle"] = veh_name
+                            if dtype == "plan":
+                                df["sys_vehicle"]  = veh_name
+                                df["sys_campaign"] = c_dict.get("camp_name", "")
+                            entries.append({"c_dict": c_dict, "c_id": c_id, "veh_id": veh_id,
+                                            "veh_name": veh_name, "df": df, "old_n": old_n,
+                                            "mapping": mapping, "src_info": src_info,
+                                            "cfg": cfg, "sheets": True, "dtype": dtype})
+                        except Exception as e_veh:
+                            sync_errors.append(f"❌ {dtype_label} · **{veh_name}**: {e_veh}")
+                    return entries
+
                 try:
-                    def _sync_dtype_list(dtype, configs):
-                        all_dfs = []
-                        new_configs = []
-                        dtype_label = "Plano" if dtype == "plan" else "Assets"
-                        for idx_s, c_dict in enumerate(configs):
-                            veh_id   = c_dict.get("veh_id")
-                            veh_name = c_dict.get("veh_name", "Desconhecido")
-                            cfg      = c_dict.get("cfg", {})
-                            mapping  = c_dict.get("mapping", {})
-                            src_info = c_dict.get("src_info", "")
-                            c_id     = c_dict.get("camp_id") or st.session_state.get("cfg_campaign_id")
-
-                            if not veh_id:
-                                continue
-
-                            sync_log.info(f"🔄 {dtype_label} · {idx_s+1}/{len(configs)} · **{veh_name}**…")
-
-                            if not cfg or cfg.get("src") != "Link (Google Sheets / Office 365)":
-                                df, _, _, _, _ = load_ingestion(c_id, veh_id, dtype)
-                                if df is not None and not df.empty:
-                                    df = df.copy()
-                                    df["vehicle"] = veh_name
-                                    if dtype == "plan":
-                                        df["sys_vehicle"]  = veh_name
-                                        df["sys_campaign"] = c_dict.get("camp_name", "")
-                                    all_dfs.append(df)
-                                new_configs.append(c_dict)
-                                continue
-
-                            try:
-                                from data_processor import read_file, apply_mapping, normalize_dates
-                                df = read_file("url", url=cfg["url"], sheet_name=cfg.get("sheet", 0), header_row=cfg.get("header_row", 0))
-                                if dtype == "plan":
-                                    veh_col    = cfg.get("veh_col", "(não usar)")
-                                    veh_filter = cfg.get("veh_filter", "")
-                                    if veh_col != "(não usar)" and veh_filter.strip():
-                                        df = df[df[veh_col].astype(str).str.strip().str.lower() == veh_filter.strip().lower()].copy()
-                                    if veh_col != "(não usar)" and veh_col in df.columns:
-                                        df = df.drop(columns=[veh_col])
-                                    active = {k: v for k, v in mapping.items() if v != "(não mapear)"}
-                                    df = normalize_dates(apply_mapping(df, active), ["start_date", "end_date"])
-                                else:
-                                    active = {k: v for k, v in mapping.items() if v != "(não mapear)"}
-                                    df = apply_mapping(df, active)
-
-                                df["vehicle"] = veh_name
-                                if dtype == "plan":
-                                    df["sys_vehicle"]  = veh_name
-                                    df["sys_campaign"] = c_dict.get("camp_name", "")
-
-                                if not df.empty:
-                                    save_ingestion(c_id, veh_id, dtype, df, mapping, src_info, json.dumps(cfg),
-                                                   username=st.session_state.get("username", ""))
-                                    all_dfs.append(df)
-                                new_configs.append(c_dict)
-                            except Exception as e_veh:
-                                sync_errors.append(f"❌ {dtype_label} · **{veh_name}**: {e_veh}")
-                                new_configs.append(c_dict)
-
-                        if all_dfs:
-                            st.session_state[f"{dtype}_df"] = pd.concat(all_dfs, ignore_index=True)
-                            st.session_state[f"all_{dtype}_configs"] = new_configs
-
-                    if sync_p: _sync_dtype_list("plan", sync_p)
-                    if sync_a: _sync_dtype_list("assets", sync_a)
-
-                    for k in ["merged_df", "unmatched_df", "fuzzy_df", "_cross_sig"]:
-                        st.session_state.pop(k, None)
-
+                    entries_p = _fetch_new("plan",   sync_p) if sync_p else []
+                    entries_a = _fetch_new("assets", sync_a) if sync_a else []
                     sync_log.empty()
-                    if sync_errors:
-                        for err in sync_errors:
-                            st.warning(err)
-                        st.warning(f"Sincronização concluída com {len(sync_errors)} erro(s).")
-                    else:
-                        st.success("Sincronizado com sucesso!")
+                    st.session_state["_sync_preview"] = {
+                        "entries_p": entries_p, "entries_a": entries_a, "errors": sync_errors
+                    }
                     st.rerun()
                 except Exception as e:
                     sync_log.empty()
-                    st.error(f"Erro na sincronização: {e}")
+                    st.error(f"Erro ao buscar dados: {e}")
+
+            # ── Fase 2: mostrar diff e aguardar confirmação ───────────────
+            _sp = st.session_state.get("_sync_preview")
+            if _sp is not None:
+                all_entries = _sp["entries_p"] + _sp["entries_a"]
+                sheets_entries = [e for e in all_entries if e.get("sheets")]
+                total_old = sum(e["old_n"] for e in sheets_entries)
+                total_new = sum(len(e["df"]) if e["df"] is not None else 0 for e in sheets_entries)
+                delta = total_new - total_old
+
+                st.info(
+                    f"**Prévia da sincronização** · {len(sheets_entries)} veículo(s) com Sheets  \n"
+                    f"Antes: **{total_old:,}** linhas → Depois: **{total_new:,}** linhas  "
+                    f"(**{delta:+,}**)"
+                )
+                if _sp["errors"]:
+                    for err in _sp["errors"]:
+                        st.warning(err)
+
+                with st.expander("Ver detalhes por veículo", expanded=False):
+                    for e in sheets_entries:
+                        n_new = len(e["df"]) if e["df"] is not None else 0
+                        d = n_new - e["old_n"]
+                        icon = "🟢" if d >= 0 else "🔴"
+                        st.caption(f"{icon} **{e['veh_name']}** ({e['dtype']}) — {e['old_n']:,} → {n_new:,} ({d:+,})")
+
+                sc1, sc2 = st.columns(2)
+                if sc1.button("✅ Confirmar e Salvar", type="primary", key="sync_confirm"):
+                    _uname = st.session_state.get("username", "")
+                    for e in all_entries:
+                        df_e = e.get("df")
+                        if not e.get("sheets") or df_e is None or df_e.empty:
+                            continue
+                        try:
+                            save_ingestion(e["c_id"], e["veh_id"], e["dtype"], df_e,
+                                           e.get("mapping", {}), e.get("src_info", ""),
+                                           json.dumps(e.get("cfg", {})), username=_uname)
+                        except Exception as exc:
+                            st.error(f"Erro ao salvar {e['veh_name']}: {exc}")
+
+                    # Rebuild session df
+                    for dtype, entries in [("plan", _sp["entries_p"]), ("assets", _sp["entries_a"])]:
+                        all_dfs = [e["df"] for e in entries if e.get("df") is not None and not e["df"].empty]
+                        if all_dfs:
+                            st.session_state[f"{dtype}_df"] = pd.concat(all_dfs, ignore_index=True)
+                            st.session_state[f"all_{dtype}_configs"] = [e["c_dict"] for e in entries]
+
+                    for k in ["merged_df", "unmatched_df", "fuzzy_df", "_cross_sig", "_sync_preview"]:
+                        st.session_state.pop(k, None)
+                    st.success("Sincronizado com sucesso!")
+                    st.rerun()
+
+                if sc2.button("❌ Cancelar", key="sync_cancel"):
+                    st.session_state.pop("_sync_preview", None)
+                    st.rerun()
 
         base = st.session_state.get("merged_df")
         if base is None:
@@ -1633,6 +1690,7 @@ def main() -> None:
 
         TABLE_COLS = {
             "veiculacao_status": "Status",
+            "_quality":          "Qualidade Match",
             "vehicle":           "Veículo",
             "campaign_name":     "Campanha",
             "ad_group":          "Grupo de Anúncio",
@@ -1645,8 +1703,22 @@ def main() -> None:
             "views":             "Views",
             "spend":             "Valor Gasto (R$)",
         }
+        # Adiciona coluna de qualidade baseada em _match_type
+        if "_match_type" in filtered.columns:
+            def _quality_badge(v):
+                if pd.isna(v) or not v:
+                    return "❌ Sem match"
+                s = str(v).lower()
+                if s == "exato":
+                    return "✅ Exato"
+                if s.startswith("fuzzy"):
+                    return f"🟡 {v}"
+                return str(v)
+            filtered = filtered.copy()
+            filtered["_quality"] = filtered["_match_type"].apply(_quality_badge)
+
         ordered = [c for c in TABLE_COLS if c in filtered.columns]
-        rest    = [c for c in filtered.columns if c not in ordered]
+        rest    = [c for c in filtered.columns if c not in ordered and not c.startswith("_")]
         tbl = filtered[ordered + rest].rename(columns=TABLE_COLS)
 
         st.dataframe(tbl, use_container_width=True, hide_index=True, height=420)
@@ -2193,6 +2265,26 @@ def main() -> None:
                             st.session_state.pop(f"confirm_del_camp_{cid}", None)
                             st.rerun()
 
+                    # ── Limpar dados da campanha (item 21) ────────────────
+                    if st.button("🧹 Limpar todos os dados", key=f"clear_data_btn_{cid}",
+                                 help="Remove plano e assets de todos os veículos desta campanha"):
+                        st.session_state[f"confirm_clear_{cid}"] = True
+
+                    if st.session_state.get(f"confirm_clear_{cid}"):
+                        st.warning(
+                            f"⚠️ Isso apagará o plano e os assets de **todos os {len(vehs)} veículo(s)** "
+                            f"de **{cname}**. O histórico (log) será mantido. Não pode ser desfeito."
+                        )
+                        cl1, cl2 = st.columns(2)
+                        if cl1.button("🧹 Sim, limpar dados", type="primary", key=f"confirm_clear_yes_{cid}"):
+                            n = clear_campaign_data(cid)
+                            st.session_state.pop(f"confirm_clear_{cid}", None)
+                            st.success(f"{n} registro(s) removido(s).")
+                            st.rerun()
+                        if cl2.button("❌ Cancelar", key=f"confirm_clear_no_{cid}"):
+                            st.session_state.pop(f"confirm_clear_{cid}", None)
+                            st.rerun()
+
                     # ── Veículos ───────────────────────────────────────────
                     if vehs:
                         st.markdown("**Veículos**")
@@ -2244,17 +2336,34 @@ def main() -> None:
                                 if not _log:
                                     st.caption("Nenhuma atualização registrada.")
                                 else:
-                                    _log_rows = []
                                     for _e in _log:
                                         _ts_str = _e["ts"].strftime("%d/%m/%Y %H:%M") if _e["ts"] and hasattr(_e["ts"], "strftime") else str(_e["ts"] or "")[:16]
-                                        _log_rows.append({
-                                            "Data/Hora": _ts_str,
-                                            "Tipo": "Plano" if _e["data_type"] == "plan" else "Assets",
-                                            "Usuário": _e["username"] or "—",
-                                            "Linhas": _e["row_count"],
-                                            "Origem": (_e["source_info"] or "")[:60],
-                                        })
-                                    st.dataframe(pd.DataFrame(_log_rows), use_container_width=True, hide_index=True)
+                                        _dtype_lbl = "Plano" if _e["data_type"] == "plan" else "Assets"
+                                        _hc1, _hc2 = st.columns([6, 1])
+                                        _hc1.caption(
+                                            f"**{_ts_str}** · {_dtype_lbl} · "
+                                            f"{_e['row_count']:,} linhas · "
+                                            f"{'🔒 ' if _e.get('username') else ''}"
+                                            f"{_e.get('username') or '—'}"
+                                        )
+                                        _has_blob = _e.get("id") is not None
+                                        if _has_blob and _hc2.button("↩", key=f"rb_{_e['id']}", help="Restaurar esta versão"):
+                                            st.session_state[f"confirm_rb_{_e['id']}"] = True
+                                        if st.session_state.get(f"confirm_rb_{_e['id']}"):
+                                            st.warning(f"Restaurar versão de {_ts_str} ({_dtype_lbl}, {_e['row_count']:,} linhas)?")
+                                            _rb1, _rb2 = st.columns(2)
+                                            if _rb1.button("✅ Restaurar", type="primary", key=f"rb_yes_{_e['id']}"):
+                                                try:
+                                                    restore_ingestion_from_log(_e["id"])
+                                                    st.session_state.pop(f"confirm_rb_{_e['id']}", None)
+                                                    st.success("Versão restaurada com sucesso!")
+                                                    st.rerun()
+                                                except Exception as _rb_exc:
+                                                    st.error(str(_rb_exc))
+                                            if _rb2.button("❌ Cancelar", key=f"rb_no_{_e['id']}"):
+                                                st.session_state.pop(f"confirm_rb_{_e['id']}", None)
+                                                st.rerun()
+                                        st.markdown("---")
                     else:
                         st.caption("Sem veículos cadastrados.")
 
@@ -2298,6 +2407,43 @@ def main() -> None:
                                     delete_alert_config(_ae["id"])
                                     st.rerun()
                                 st.markdown("---")
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    #  PAGE — RELATÓRIO SOB DEMANDA (item 26)
+    # ═══════════════════════════════════════════════════════════════════════════
+    elif page == "📄 Relatório":
+        import streamlit.components.v1 as _stc
+        st.title("📄 Relatório de Campanhas")
+
+        if st.button("🔄 Gerar relatório agora", type="primary", key="rpt_generate"):
+            st.session_state.pop("_rpt_html", None)
+
+        if "_rpt_html" not in st.session_state:
+            with st.spinner("Gerando relatório…"):
+                try:
+                    import sys as _sys, os as _os
+                    _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+                    from report import gather_plan_data, deduplicate, compute_status, build_html
+                    _raw, _no_data = gather_plan_data()
+                    if not _raw.empty:
+                        _raw = deduplicate(_raw)
+                        _df_rpt = compute_status(_raw)
+                    else:
+                        _df_rpt = _raw
+                    st.session_state["_rpt_html"] = build_html(_df_rpt, _no_data)
+                except Exception as _rpt_err:
+                    st.error(f"Erro ao gerar relatório: {_rpt_err}")
+
+        _html_rpt = st.session_state.get("_rpt_html")
+        if _html_rpt:
+            st.download_button(
+                "⬇️ Baixar HTML",
+                _html_rpt.encode("utf-8"),
+                f"relatorio_{datetime.now().strftime('%Y%m%d_%H%M')}.html",
+                "text/html",
+                key="rpt_download",
+            )
+            _stc.html(_html_rpt, height=800, scrolling=True)
 
     # ═══════════════════════════════════════════════════════════════════════════
     #  PAGE 3 — CLIENTES (admin only)
