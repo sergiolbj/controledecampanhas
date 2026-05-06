@@ -119,6 +119,16 @@ def init_db() -> None:
                     source_info  TEXT NOT NULL DEFAULT '',
                     ts           TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
+                CREATE TABLE IF NOT EXISTS alert_configs (
+                    id           SERIAL PRIMARY KEY,
+                    campaign_id  INTEGER REFERENCES campaigns(id) ON DELETE CASCADE,
+                    alert_type   TEXT NOT NULL,
+                    threshold    INTEGER NOT NULL DEFAULT 7,
+                    email_to     TEXT NOT NULL DEFAULT '',
+                    enabled      BOOLEAN NOT NULL DEFAULT true,
+                    created_by   TEXT NOT NULL DEFAULT '',
+                    created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
             """)
             cur.execute("""
                 ALTER TABLE ingestion_cache
@@ -553,6 +563,104 @@ def has_default_password(username: str) -> bool:
                 (username, default_hash),
             )
             return cur.fetchone() is not None
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_alert_configs(campaign_id: int | None = None) -> list[dict]:
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            if campaign_id is not None:
+                cur.execute(
+                    "SELECT id, campaign_id, alert_type, threshold, email_to, enabled, created_by, created_at "
+                    "FROM alert_configs WHERE campaign_id=%s ORDER BY alert_type",
+                    (campaign_id,),
+                )
+            else:
+                cur.execute(
+                    "SELECT id, campaign_id, alert_type, threshold, email_to, enabled, created_by, created_at "
+                    "FROM alert_configs ORDER BY campaign_id, alert_type"
+                )
+            rows = cur.fetchall()
+    return [
+        {"id": r[0], "campaign_id": r[1], "alert_type": r[2], "threshold": r[3],
+         "email_to": r[4], "enabled": r[5], "created_by": r[6], "created_at": r[7]}
+        for r in rows
+    ]
+
+
+def save_alert_config(campaign_id: int, alert_type: str, threshold: int,
+                      email_to: str, enabled: bool, created_by: str = "") -> None:
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO alert_configs (campaign_id, alert_type, threshold, email_to, enabled, created_by)
+                VALUES (%s,%s,%s,%s,%s,%s)
+                ON CONFLICT DO NOTHING
+            """, (campaign_id, alert_type, threshold, email_to.strip(), enabled, created_by))
+    st.cache_data.clear()
+
+
+def update_alert_config(alert_id: int, threshold: int, email_to: str, enabled: bool) -> None:
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE alert_configs SET threshold=%s, email_to=%s, enabled=%s WHERE id=%s",
+                (threshold, email_to.strip(), enabled, alert_id),
+            )
+    st.cache_data.clear()
+
+
+def delete_alert_config(alert_id: int) -> None:
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM alert_configs WHERE id=%s", (alert_id,))
+    st.cache_data.clear()
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def get_mapping_coverage() -> list[dict]:
+    """Para cada veículo com dados no ingestion_cache, retorna % de campos mapeados."""
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT ic.campaign_id, c.name, ic.vehicle_id, v.name, ic.data_type, ic.mapping_json
+                FROM ingestion_cache ic
+                JOIN campaigns c ON c.id = ic.campaign_id
+                JOIN vehicles  v ON v.id = ic.vehicle_id
+                ORDER BY c.name, v.name, ic.data_type
+            """)
+            rows = cur.fetchall()
+
+    from data_processor import PLAN_FIELDS, ASSET_FIELDS
+    TOTAL_PLAN   = len(PLAN_FIELDS)
+    TOTAL_ASSETS = len(ASSET_FIELDS)
+
+    # Aggregate by (campaign_id, vehicle_id)
+    veh_map: dict[tuple, dict] = {}
+    for r in rows:
+        cid, cname, vid, vname, dtype, mapping_json = r
+        key = (cid, vid)
+        if key not in veh_map:
+            veh_map[key] = {"campaign_id": cid, "campaign": cname, "vehicle_id": vid, "vehicle": vname,
+                            "plan_mapped": 0, "plan_total": TOTAL_PLAN,
+                            "assets_mapped": 0, "assets_total": TOTAL_ASSETS}
+        try:
+            m = json.loads(mapping_json) if mapping_json else {}
+        except Exception:
+            m = {}
+        mapped_count = sum(1 for v in m.values() if v and v != "(não mapear)")
+        if dtype == "plan":
+            veh_map[key]["plan_mapped"]  = mapped_count
+        else:
+            veh_map[key]["assets_mapped"] = mapped_count
+
+    result = []
+    for entry in veh_map.values():
+        total    = entry["plan_total"] + entry["assets_total"]
+        mapped   = entry["plan_mapped"] + entry["assets_mapped"]
+        entry["coverage_pct"] = round(mapped / total * 100) if total else 0
+        result.append(entry)
+    return result
 
 
 @st.cache_data(ttl=60, show_spinner=False)

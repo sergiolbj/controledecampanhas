@@ -17,6 +17,8 @@ from auth import (
     create_session, validate_session, delete_session,
     save_campaign_sheets_config, load_campaign_sheets_config,
     has_default_password, get_ingestion_timestamps, get_ingestion_log,
+    get_alert_configs, save_alert_config, update_alert_config, delete_alert_config,
+    get_mapping_coverage,
 )
 
 COOKIE_NAME = "adops_session"
@@ -835,6 +837,30 @@ def main() -> None:
             _nav("🏢 Clientes", "🏢 Clientes")
             _nav("👥 Usuários", "👥 Usuários")
 
+        # ── Item 16: busca global de campanha ────────────────────────────────
+        st.divider()
+        _sq = st.text_input("🔍 Buscar campanha", placeholder="Nome ou cliente…", key="sb_search",
+                            label_visibility="collapsed")
+        if _sq.strip():
+            _all = get_campaigns(username=username, role=role)
+            _ql  = _sq.strip().lower()
+            _hits = [c for c in _all if _ql in c["name"].lower()
+                     or _ql in (c.get("client_name") or "").lower()]
+            if _hits:
+                for _h in _hits[:6]:
+                    _lbl = _h["name"] + (f" · {_h['client_name']}" if _h.get("client_name") else "")
+                    if st.button(_lbl, key=f"sb_hit_{_h['id']}", use_container_width=True):
+                        for _k in ["plan_df", "assets_df", "merged_df", "unmatched_df",
+                                   "fuzzy_df", "_cross_sig", "all_plan_configs", "all_assets_configs"]:
+                            st.session_state.pop(_k, None)
+                        st.session_state.update(
+                            page="📊 Dashboard",
+                            cfg_campaign_id=_h["id"],
+                            cfg_campaign_name=_h["name"],
+                        )
+                        st.rerun()
+            else:
+                st.caption("Nenhuma campanha encontrada.")
         st.divider()
         if st.button("⏏ Sair", use_container_width=True):
             token = st.session_state.get("_session_token")
@@ -1433,6 +1459,50 @@ def main() -> None:
                     icon="⏰",
                 )
 
+        # ── Item 20: comparação de períodos ──────────────────────────────────
+        _date_col = next((c for c in ["start_date", "end_date"] if c in filtered.columns), None)
+        if _date_col and not filtered.empty:
+            with st.expander("📅 Comparar Períodos", expanded=False):
+                _today_dt = pd.Timestamp.now().date()
+                _cp1, _cp2 = st.columns(2)
+                _pa_s = _cp1.date_input("Período A — início", value=_today_dt - pd.Timedelta(days=60), key="cmp_a_s")
+                _pa_e = _cp1.date_input("Período A — fim",    value=_today_dt - pd.Timedelta(days=31), key="cmp_a_e")
+                _pb_s = _cp2.date_input("Período B — início", value=_today_dt - pd.Timedelta(days=30), key="cmp_b_s")
+                _pb_e = _cp2.date_input("Período B — fim",    value=_today_dt,                         key="cmp_b_e")
+
+                _num_cols = [c for c in ["impressions","clicks","views","spend"] if c in filtered.columns]
+
+                if _num_cols and st.button("🔀 Comparar", type="primary", key="cmp_run"):
+                    def _period_filter(df, start, end, col):
+                        _s = pd.to_datetime(df[col], errors="coerce")
+                        return df[(_s.dt.date >= start) & (_s.dt.date <= end)]
+
+                    _fa = _period_filter(filtered, _pa_s, _pa_e, _date_col)
+                    _fb = _period_filter(filtered, _pb_s, _pb_e, _date_col)
+
+                    def _to_num_col(df, col):
+                        return pd.to_numeric(
+                            df[col].astype(str).str.replace(r"[^\d.,]","",regex=True)
+                                   .str.replace(".","",regex=False).str.replace(",",".",regex=False),
+                            errors="coerce"
+                        ).fillna(0)
+
+                    _rows = []
+                    for _nc in _num_cols:
+                        _va = _to_num_col(_fa, _nc).sum() if not _fa.empty else 0
+                        _vb = _to_num_col(_fb, _nc).sum() if not _fb.empty else 0
+                        _delta = _vb - _va
+                        _pct   = (_delta / _va * 100) if _va else None
+                        _rows.append({
+                            "Métrica":          FIELD_LABELS.get(_nc, _nc),
+                            f"A ({_pa_s}→{_pa_e})": f"{_va:,.0f}",
+                            f"B ({_pb_s}→{_pb_e})": f"{_vb:,.0f}",
+                            "Variação":         f"{_delta:+,.0f}",
+                            "Variação %":       f"{_pct:+.1f}%" if _pct is not None else "—",
+                        })
+                    st.dataframe(pd.DataFrame(_rows), use_container_width=True, hide_index=True)
+                    st.caption(f"Período A: **{len(_fa):,}** linhas · Período B: **{len(_fb):,}** linhas")
+
         if filtered.empty:
             st.warning("Nenhum dado disponível para exibir no Dashboard. Se você acabou de criar a campanha, acesse 'Mapeamento & Cruzamento' para ingerir os dados.")
         else:
@@ -1494,6 +1564,52 @@ def main() -> None:
                     yaxis=dict(gridcolor="#21262d"),
                 )
                 st.plotly_chart(fig, use_container_width=True)
+
+        # ── Item 17: orçamento vs gasto ──────────────────────────────────────
+        if "budget" in filtered.columns and "spend" in filtered.columns:
+            def _to_num(s):
+                try:
+                    if pd.isna(s): return 0.0
+                    return float(str(s).replace("R$","").replace(".","").replace(",",".").strip())
+                except Exception: return 0.0
+
+            _bv = filtered.copy()
+            _bv["_budget_n"] = _bv["budget"].apply(_to_num)
+            _bv["_spend_n"]  = _bv["spend"].apply(_to_num)
+            _grp_col = "sys_vehicle" if "sys_vehicle" in _bv.columns else (
+                        "sys_campaign" if "sys_campaign" in _bv.columns else None)
+            if _grp_col and (_bv["_budget_n"].sum() > 0 or _bv["_spend_n"].sum() > 0):
+                st.divider()
+                st.subheader("💰 Orçamento vs Gasto")
+                _agg = (_bv.groupby(_grp_col)
+                          .agg(Orçamento=("_budget_n","sum"), Gasto=("_spend_n","sum"))
+                          .reset_index()
+                          .rename(columns={_grp_col: "Veículo/Campanha"}))
+                _agg["% Utilizado"] = (_agg["Gasto"] / _agg["Orçamento"].replace(0, float("nan")) * 100).round(1)
+
+                _bm1, _bm2, _bm3 = st.columns(3)
+                _tot_bud = _agg["Orçamento"].sum()
+                _tot_spd = _agg["Gasto"].sum()
+                _tot_pct = (_tot_spd / _tot_bud * 100) if _tot_bud else 0
+                _bm1.metric("Orçamento Total", f"R$ {_tot_bud:,.0f}".replace(",","X").replace(".",",").replace("X","."))
+                _bm2.metric("Gasto Total",     f"R$ {_tot_spd:,.0f}".replace(",","X").replace(".",",").replace("X","."))
+                _bm3.metric("% Utilizado", f"{_tot_pct:.1f}%",
+                            delta=f"{'acima' if _tot_pct>100 else 'dentro'} do orçamento",
+                            delta_color="inverse" if _tot_pct>100 else "normal")
+
+                _fig_bud = px.bar(
+                    _agg.melt(id_vars="Veículo/Campanha", value_vars=["Orçamento","Gasto"],
+                              var_name="Tipo", value_name="Valor (R$)"),
+                    x="Veículo/Campanha", y="Valor (R$)", color="Tipo", barmode="group",
+                    title="Orçamento vs Gasto por Veículo/Campanha",
+                    color_discrete_map={"Orçamento": "#58a6ff", "Gasto": "#3fb950"},
+                )
+                _fig_bud.update_layout(
+                    **dict(paper_bgcolor="#0d1117", font_color="#c9d1d9", plot_bgcolor="#0d1117"),
+                    xaxis=dict(gridcolor="#21262d"), yaxis=dict(gridcolor="#21262d"),
+                )
+                st.plotly_chart(_fig_bud, use_container_width=True)
+                st.dataframe(_agg, use_container_width=True, hide_index=True)
 
         # ── Tabela de criativos ───────────────────────────────────────────────
         st.divider()
@@ -2012,6 +2128,28 @@ def main() -> None:
             st.warning("🔒 Acesso negado.")
             return
 
+        # ── Item 19: cobertura de mapeamento ──────────────────────────────────
+        _cov_data = get_mapping_coverage()
+        if _cov_data:
+            with st.expander("📊 Cobertura de Mapeamento por Veículo", expanded=False):
+                _cov_df = pd.DataFrame(_cov_data)[
+                    ["campaign", "vehicle", "plan_mapped", "plan_total", "assets_mapped", "assets_total", "coverage_pct"]
+                ].rename(columns={
+                    "campaign": "Campanha", "vehicle": "Veículo",
+                    "plan_mapped": "Plano Mapeado", "plan_total": "Plano Total",
+                    "assets_mapped": "Assets Mapeados", "assets_total": "Assets Total",
+                    "coverage_pct": "Cobertura %",
+                })
+                def _color_cov(val):
+                    if val >= 80: return "color:#3fb950"
+                    if val >= 50: return "color:#f0883e"
+                    return "color:#f85149"
+                st.dataframe(
+                    _cov_df.style.applymap(_color_cov, subset=["Cobertura %"]),
+                    use_container_width=True, hide_index=True,
+                )
+            st.divider()
+
         all_camps = get_campaigns(role="admin")
         if not all_camps:
             st.info("Nenhuma campanha cadastrada.")
@@ -2119,6 +2257,47 @@ def main() -> None:
                                     st.dataframe(pd.DataFrame(_log_rows), use_container_width=True, hide_index=True)
                     else:
                         st.caption("Sem veículos cadastrados.")
+
+                    # ── Item 18: alertas configuráveis por campanha ────────
+                    if role == "admin":
+                        with st.expander("🔔 Alertas de email para esta campanha", expanded=False):
+                            _a_configs = get_alert_configs(cid)
+                            ALERT_LABELS = {
+                                "ending_soon": "⏰ Encerrando em breve",
+                                "no_assets":   "⚠️ Sem assets cadastrados",
+                                "no_plan":     "⚠️ Sem plano cadastrado",
+                                "over_budget": "💸 Acima do orçamento (%)",
+                            }
+                            _existing = {a["alert_type"]: a for a in _a_configs}
+
+                            for _atype, _alabel in ALERT_LABELS.items():
+                                _ae = _existing.get(_atype)
+                                st.markdown(f"**{_alabel}**")
+                                _ka1, _ka2, _ka3, _ka4 = st.columns([3, 2, 2, 1])
+                                _thr_default = _ae["threshold"] if _ae else (7 if "soon" in _atype else 100)
+                                _email_default = _ae["email_to"] if _ae else ""
+                                _enabled_default = _ae["enabled"] if _ae else False
+                                _thr   = _ka1.number_input("Dias/%" if "soon" in _atype or "budget" in _atype else "—",
+                                                           min_value=1, max_value=365, value=_thr_default,
+                                                           key=f"al_thr_{cid}_{_atype}", label_visibility="collapsed")
+                                _email = _ka2.text_input("Email destino", value=_email_default,
+                                                         placeholder="email@exemplo.com",
+                                                         key=f"al_email_{cid}_{_atype}", label_visibility="collapsed")
+                                _enab  = _ka3.checkbox("Ativado", value=_enabled_default,
+                                                        key=f"al_enab_{cid}_{_atype}")
+                                _ka4.write("")
+                                if _ka4.button("💾", key=f"al_save_{cid}_{_atype}", help="Salvar alerta"):
+                                    if _ae:
+                                        update_alert_config(_ae["id"], int(_thr), _email, _enab)
+                                    else:
+                                        save_alert_config(cid, _atype, int(_thr), _email, _enab,
+                                                          created_by=username)
+                                    st.success("Alerta salvo!")
+                                    st.rerun()
+                                if _ae and st.button("🗑 Remover", key=f"al_del_{cid}_{_atype}"):
+                                    delete_alert_config(_ae["id"])
+                                    st.rerun()
+                                st.markdown("---")
 
     # ═══════════════════════════════════════════════════════════════════════════
     #  PAGE 3 — CLIENTES (admin only)

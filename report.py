@@ -523,6 +523,130 @@ def send_email(html: str) -> None:
     print(f"Report enviado para {to}")
 
 
+# ── Campaign-level alerts ─────────────────────────────────────────────────────
+
+def _get_alert_configs() -> list[dict]:
+    with _db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT ac.id, ac.campaign_id, c.name, ac.alert_type, ac.threshold, ac.email_to
+                FROM alert_configs ac
+                JOIN campaigns c ON c.id = ac.campaign_id
+                WHERE ac.enabled = true AND ac.email_to <> ''
+            """)
+            rows = cur.fetchall()
+    return [{"id": r[0], "campaign_id": r[1], "campaign_name": r[2],
+             "alert_type": r[3], "threshold": r[4], "email_to": r[5]}
+            for r in rows]
+
+
+def _has_ingestion(campaign_id: int, data_type: str) -> bool:
+    with _db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT 1 FROM ingestion_cache WHERE campaign_id=%s AND data_type=%s LIMIT 1",
+                (campaign_id, data_type),
+            )
+            return cur.fetchone() is not None
+
+
+def _send_alert_email(to: str, subject: str, body_html: str) -> None:
+    host     = os.environ["SMTP_HOST"]
+    port     = int(os.environ.get("SMTP_PORT", "587"))
+    user     = os.environ["SMTP_USER"]
+    password = os.environ["SMTP_PASS"]
+    from_    = os.environ.get("REPORT_FROM", user)
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"]    = from_
+    msg["To"]      = to
+    msg.attach(MIMEText(body_html, "html", "utf-8"))
+    with smtplib.SMTP(host, port) as srv:
+        srv.ehlo(); srv.starttls(); srv.login(user, password)
+        srv.sendmail(from_, to.split(","), msg.as_string())
+
+
+def send_campaign_alerts(df: pd.DataFrame) -> None:
+    """Check alert_configs and dispatch per-campaign emails if conditions are met."""
+    configs = _get_alert_configs()
+    if not configs:
+        return
+
+    today = pd.Timestamp.now().normalize()
+    today_str = datetime.now().strftime("%d/%m/%Y")
+
+    for cfg in configs:
+        cid    = cfg["campaign_id"]
+        cname  = cfg["campaign_name"]
+        atype  = cfg["alert_type"]
+        thr    = cfg["threshold"]
+        to     = cfg["email_to"]
+
+        triggered = False
+        detail    = ""
+
+        if atype == "ending_soon":
+            if not df.empty and "sys_campaign" in df.columns:
+                camp_df = df[df["sys_campaign"] == cname]
+                if not camp_df.empty and "end_date" in camp_df.columns:
+                    deadline = today + pd.Timedelta(days=thr)
+                    soon = camp_df[
+                        camp_df["end_date"].notna() &
+                        (camp_df["end_date"] >= today) &
+                        (camp_df["end_date"] <= deadline)
+                    ]
+                    if not soon.empty:
+                        triggered = True
+                        detail = f"{len(soon)} peça(s) encerram em ≤{thr} dias."
+
+        elif atype == "no_plan":
+            if not _has_ingestion(cid, "plan"):
+                triggered = True
+                detail = "Nenhum plano cadastrado para esta campanha."
+
+        elif atype == "no_assets":
+            if not _has_ingestion(cid, "assets"):
+                triggered = True
+                detail = "Nenhum asset cadastrado para esta campanha."
+
+        elif atype == "over_budget":
+            if not df.empty and "sys_campaign" in df.columns:
+                camp_df = df[df["sys_campaign"] == cname]
+                if not camp_df.empty and "budget" in camp_df.columns and "spend" in camp_df.columns:
+                    def _n(s):
+                        try:
+                            return float(str(s).replace("R$","").replace(".","").replace(",",".").strip())
+                        except Exception:
+                            return 0.0
+                    tot_bud = camp_df["budget"].apply(_n).sum()
+                    tot_spd = camp_df["spend"].apply(_n).sum()
+                    if tot_bud > 0 and (tot_spd / tot_bud * 100) >= thr:
+                        triggered = True
+                        detail = f"Gasto ({tot_spd:,.0f}) atingiu {thr}% do orçamento ({tot_bud:,.0f})."
+
+        if triggered:
+            alert_labels = {
+                "ending_soon": "⏰ Campanha encerrando em breve",
+                "no_plan":     "⚠️ Sem plano cadastrado",
+                "no_assets":   "⚠️ Sem assets cadastrados",
+                "over_budget": "💸 Orçamento atingido",
+            }
+            subject = f"[Campanha PPG] {alert_labels.get(atype, atype)} — {cname}"
+            html = f"""<!DOCTYPE html><html><body style="font-family:Arial,sans-serif;padding:24px;background:#f0f4f8">
+<div style="max-width:560px;margin:0 auto;background:#fff;border-radius:8px;padding:24px;box-shadow:0 2px 8px rgba(0,0,0,.08)">
+  <h2 style="color:#1e293b">{alert_labels.get(atype, atype)}</h2>
+  <p style="color:#475569"><b>Campanha:</b> {cname}</p>
+  <p style="color:#475569">{detail}</p>
+  <hr style="border:none;border-top:1px solid #e2e8f0">
+  <p style="color:#94a3b8;font-size:11px">Controle de Campanhas PPG · {today_str}</p>
+</div></body></html>"""
+            try:
+                _send_alert_email(to, subject, html)
+                print(f"[alerta] {atype} enviado para {to} — campanha: {cname}")
+            except Exception as exc:
+                print(f"[alerta] erro ao enviar {atype} para {to}: {exc}")
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -544,6 +668,7 @@ def main() -> None:
 
     html = build_html(df, no_data)
     send_email(html)
+    send_campaign_alerts(df)
 
 
 if __name__ == "__main__":

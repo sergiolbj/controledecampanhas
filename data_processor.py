@@ -11,6 +11,7 @@ FIELD_LABELS: dict[str, str] = {
     "ad_name":       "Anúncio",
     "start_date":    "Data de Início",
     "end_date":      "Data de Fim",
+    "budget":        "Orçamento (R$)",
     "vehicle":       "Veículo / Canal",
     "date":          "Data",
     "spend":         "Valor Gasto",
@@ -23,7 +24,7 @@ FIELD_LABELS: dict[str, str] = {
     "asset_link":    "Link do Asset",
 }
 
-PLAN_FIELDS  = ["campaign_name", "ad_group", "ad_name", "start_date", "end_date"]
+PLAN_FIELDS  = ["campaign_name", "ad_group", "ad_name", "start_date", "end_date", "budget"]
 ASSET_FIELDS = ["campaign_name", "ad_group", "ad_name", "vehicle", "date", "spend", "impressions", "clicks", "views"]
 
 
