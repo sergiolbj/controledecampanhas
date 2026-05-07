@@ -20,15 +20,12 @@ from data_processor import (
     normalize_dates,
     read_file,
 )
-from modules.shared import _page_header, _export_buttons
+from modules.shared import _export_buttons
 from modules.mapper import gantt_chart
 
 
 def render(username: str, role: str) -> None:
-    _dh1, _dh2 = st.columns([3, 1])
-    with _dh1:
-        _page_header("📊", "Dashboard", "Visão consolidada de performance e veiculação")
-    d1, d2 = st.columns([3, 1])  # mantém compatibilidade com código abaixo
+    _d_left, d2 = st.columns([3, 1])
 
     all_p_configs = st.session_state.get("all_plan_configs", [])
     all_a_configs = st.session_state.get("all_assets_configs", [])
@@ -402,6 +399,16 @@ def render(username: str, role: str) -> None:
             st.warning(f"Gantt indisponível: {e}")
 
         # ── Summary charts ────────────────────────────────────────────────────
+        st.markdown("""
+<style>
+[data-testid="stPlotlyChart"] {
+    background: var(--surface, #fff);
+    border: 1px solid var(--bd, #e2e8f0);
+    border-radius: var(--r, 12px);
+    padding: 12px 4px 4px 4px;
+}
+</style>
+""", unsafe_allow_html=True)
         _is_dark = st.session_state.get("_dark_mode", False)
         _plot_bg  = "#0f172a" if _is_dark else "#ffffff"
         _paper_bg = "#0f172a" if _is_dark else "#f8fafc"
@@ -514,20 +521,21 @@ def render(username: str, role: str) -> None:
     # ── Tabela de criativos ───────────────────────────────────────────────
     st.divider()
 
-    c_src1, c_src2 = st.columns(2)
     p_src = st.session_state.get("plan_source")
     a_src = st.session_state.get("assets_source")
 
-    def render_source(label: str, src: str):
-        if not src:
-            return f"**{label}:** (Não cadastrado)"
+    def render_source(label: str, src: str) -> str:
         if src.startswith("Link: "):
             url = src.replace("Link: ", "").strip()
             return f"**{label}:** [Acessar Planilha]({url})"
         return f"**{label}:** {src}"
 
-    c_src1.info(render_source("Origem do Plano", p_src))
-    c_src2.info(render_source("Origem dos Assets", a_src))
+    if p_src or a_src:
+        c_src1, c_src2 = st.columns(2)
+        if p_src:
+            c_src1.info(render_source("Origem do Plano", p_src))
+        if a_src:
+            c_src2.info(render_source("Origem dos Assets", a_src))
 
     st.subheader("📋 Criativos")
 
