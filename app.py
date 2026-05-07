@@ -336,6 +336,15 @@ hr { border-color: #1e2530 !important; margin: 1.25rem 0 !important; }
 ::-webkit-scrollbar-track { background: #0d1117; }
 ::-webkit-scrollbar-thumb { background: #30363d; border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: #8b949e; }
+
+/* ── Anti-ghost: fade-in no rerun para mascarar conteúdo residual ─────────── */
+[data-testid="stMain"] .block-container {
+  animation: ppgFadeIn 0.18s ease-in;
+}
+@keyframes ppgFadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -463,7 +472,14 @@ def main() -> None:
     cm = _cookie_manager()
 
     # ── Restaurar sessão via cookie ───────────────────────────────────────────
+    # CookieManager (extra_streamlit_components) needs one JS round-trip before
+    # cookies are readable. On that first pass cm.get() returns None for everything.
+    # We detect this with a one-shot sentinel: if "_cm_ready" isn't set yet, we
+    # trigger a silent rerun instead of showing the login form as a ghost frame.
     if not st.session_state.get("logged_in"):
+        if not st.session_state.get("_cm_ready"):
+            st.session_state["_cm_ready"] = True
+            st.rerun()
         token = cm.get(COOKIE_NAME)
         if token:
             result = validate_session(token)
