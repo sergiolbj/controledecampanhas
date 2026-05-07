@@ -2462,7 +2462,9 @@ def main() -> None:
                         st.error(f"Coluna(s) obrigatória(s) ausente(s): {', '.join(_missing_cols)}")
                     else:
                         _batch_df = _batch_df.fillna("")
-                        _preview_rows = []
+
+                        # Monta estrutura: {camp_name: {cliente, veiculos: [...]}}
+                        _batch_parsed: dict[str, dict] = {}
                         for _, _br in _batch_df.iterrows():
                             _cn = str(_br.get("nome_campanha", "")).strip()
                             _cl = str(_br.get("cliente", "")).strip()
@@ -2470,49 +2472,69 @@ def main() -> None:
                             _vs = [v.strip() for v in _vv.split(",") if v.strip()] if _vv else []
                             if not _cn:
                                 continue
-                            _preview_rows.append({
-                                "Campanha": _cn,
-                                "Cliente": _cl or "—",
-                                "Veículos": ", ".join(_vs) if _vs else "—",
-                                "N° Veículos": len(_vs),
-                            })
+                            if _cn not in _batch_parsed:
+                                _batch_parsed[_cn] = {"cliente": _cl, "veiculos": []}
+                            _batch_parsed[_cn]["veiculos"].extend(
+                                [v for v in _vs if v not in _batch_parsed[_cn]["veiculos"]]
+                            )
 
-                        if _preview_rows:
-                            st.markdown(f"**Prévia:** {len(_preview_rows)} campanha(s) a criar")
-                            st.dataframe(pd.DataFrame(_preview_rows), use_container_width=True, hide_index=True)
+                        if not _batch_parsed:
+                            st.warning("Nenhuma linha válida encontrada na planilha.")
+                        else:
+                            st.markdown(f"**{len(_batch_parsed)} campanha(s) encontrada(s)** — selecione os veículos a criar:")
+                            st.caption("Todos os veículos vêm pré-selecionados. Desmarque os que não quer criar.")
 
-                            if st.button("✅ Criar tudo", type="primary", key="batch_create"):
-                                _existing_names = {c["name"].lower() for c in get_campaigns(role="admin", include_archived=True)}
-                                _created, _skipped, _errors_b = 0, 0, []
-                                for _, _br in _batch_df.iterrows():
-                                    _cn = str(_br.get("nome_campanha", "")).strip()
-                                    _cl = str(_br.get("cliente", "")).strip()
-                                    _vv = str(_br.get("veiculos", "")).strip()
-                                    _vs = [v.strip() for v in _vv.split(",") if v.strip()] if _vv else []
-                                    if not _cn:
-                                        continue
+                            # Seleção de veículos por campanha
+                            _batch_selection: dict[str, list[str]] = {}
+                            for _cn, _cd in _batch_parsed.items():
+                                _cl = _cd["cliente"]
+                                _vs_all = _cd["veiculos"]
+                                st.markdown(f"**{_cn}** · `{_cl or '—'}`")
+                                if _vs_all:
+                                    _sel_vehs = st.multiselect(
+                                        "Veículos",
+                                        options=_vs_all,
+                                        default=_vs_all,
+                                        key=f"batch_vsel_{_cn}",
+                                        label_visibility="collapsed",
+                                    )
+                                else:
+                                    st.caption("Sem veículos na planilha (apenas a campanha será criada).")
+                                    _sel_vehs = []
+                                _batch_selection[_cn] = _sel_vehs
+
+                            st.divider()
+                            _total_vehs_sel = sum(len(v) for v in _batch_selection.values())
+                            st.caption(f"Total selecionado: **{len(_batch_selection)} campanha(s)** · **{_total_vehs_sel} veículo(s)**")
+
+                            if st.button("✅ Criar seleção", type="primary", key="batch_create"):
+                                _existing_names = {c["name"].lower(): c["id"] for c in get_campaigns(role="admin", include_archived=True)}
+                                _created, _skipped, _vehs_created, _errors_b = 0, 0, 0, []
+                                for _cn, _sel_vehs in _batch_selection.items():
+                                    _cl = _batch_parsed[_cn]["cliente"]
                                     try:
                                         if _cn.lower() in _existing_names:
-                                            _camps_all = get_campaigns(role="admin", include_archived=True)
-                                            _cid_b = next(c["id"] for c in _camps_all if c["name"].lower() == _cn.lower())
+                                            _cid_b = _existing_names[_cn.lower()]
                                             _skipped += 1
                                         else:
                                             _cid_b = create_campaign(_cn, _cl)
                                             _created += 1
-                                        for _vn in _vs:
+                                        for _vn in _sel_vehs:
                                             try:
                                                 create_vehicle(_cid_b, _vn)
+                                                _vehs_created += 1
                                             except Exception:
-                                                pass  # veículo já existe
+                                                pass
                                     except Exception as _be:
                                         _errors_b.append(f"{_cn}: {_be}")
-                                st.success(f"✅ {_created} campanha(s) criada(s), {_skipped} já existia(m).")
+                                st.success(
+                                    f"✅ {_created} campanha(s) criada(s), {_skipped} já existia(m). "
+                                    f"{_vehs_created} veículo(s) adicionado(s)."
+                                )
                                 if _errors_b:
                                     for _eb in _errors_b:
                                         st.error(_eb)
                                 st.rerun()
-                        else:
-                            st.warning("Nenhuma linha válida encontrada na planilha.")
                 except Exception as _batch_err:
                     st.error(f"Erro ao ler planilha: {_batch_err}")
 
