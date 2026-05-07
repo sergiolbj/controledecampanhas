@@ -431,8 +431,14 @@ def mapper_ui(
                 if sheets else 0
             )
             hr1, hr2 = st.columns(2)
-            h_start = hr1.number_input("Cabeçalho — linha inicial", 1, 1000, 1, key=f"{prefix}_hrow_s")
-            h_end   = hr2.number_input("Cabeçalho — linha final", int(h_start), 1000, int(h_start), key=f"{prefix}_hrow_e")
+            h_start = hr1.number_input(
+                "Cabeçalho — linha inicial", 1, 1000, 1, key=f"{prefix}_hrow_s",
+                help="Número da linha onde ficam os nomes das colunas na planilha (normalmente 1). Use um valor maior se houver linhas de título antes do cabeçalho.",
+            )
+            h_end   = hr2.number_input(
+                "Cabeçalho — linha final", int(h_start), 1000, int(h_start), key=f"{prefix}_hrow_e",
+                help="Preencha só se o cabeçalho ocupar múltiplas linhas. Na maioria dos casos deve ser igual à linha inicial.",
+            )
             header_row = list(range(int(h_start) - 1, int(h_end))) if h_end > h_start else int(h_start) - 1
 
             # Cache DataFrame — re-read only when file/sheet/header changes
@@ -467,8 +473,14 @@ def mapper_ui(
                 if len(url_sheets) > 1 else (url_sheets[0] if url_sheets else 0)
             )
             ur1, ur2 = st.columns(2)
-            h_start = ur1.number_input("Cabeçalho — linha inicial", 1, 1000, 1, key=f"{prefix}_hrow_us")
-            h_end   = ur2.number_input("Cabeçalho — linha final", int(h_start), 1000, int(h_start), key=f"{prefix}_hrow_ue")
+            h_start = ur1.number_input(
+                "Cabeçalho — linha inicial", 1, 1000, 1, key=f"{prefix}_hrow_us",
+                help="Número da linha onde ficam os nomes das colunas na planilha (normalmente 1). Use um valor maior se houver linhas de título antes do cabeçalho.",
+            )
+            h_end   = ur2.number_input(
+                "Cabeçalho — linha final", int(h_start), 1000, int(h_start), key=f"{prefix}_hrow_ue",
+                help="Preencha só se o cabeçalho ocupar múltiplas linhas. Na maioria dos casos deve ser igual à linha inicial.",
+            )
             header_row = list(range(int(h_start) - 1, int(h_end))) if h_end > h_start else int(h_start) - 1
 
             # Cache DataFrame — re-fetch only when URL/sheet/header changes
@@ -547,10 +559,10 @@ def mapper_ui(
                     key=f"{prefix}_tname",
                 )
                 sv2.write(""); sv2.write("")
-                if sv2.button("💾 Salvar", key=f"{prefix}_tsave"):
+                if sv2.button("💾 Salvar", type="primary", key=f"{prefix}_tsave"):
                     if tpl_client != "—" and tpl_name.strip():
                         save_template(tpl_client, tpl_name.strip(), src, mapping)
-                        st.success(f"Template **{tpl_name}** salvo para **{tpl_client}**!")
+                        st.success(f"✅ Template **{tpl_name}** salvo para **{tpl_client}**!")
                     else:
                         st.warning("Selecione um cliente e informe o nome do template.")
 
@@ -569,6 +581,7 @@ def mapper_ui(
         # ── Mapeamento de Taxonomia ────────────────────────────────────────────
         loaded_map = st.session_state.get(f"{prefix}_loaded_map", {})
         st.markdown("##### Mapeamento de Taxonomia")
+        st.caption("Selecione a coluna correspondente a cada campo. Escolha **(não mapear)** para ignorar campos que não existem na sua planilha.")
         cols_opt = ["(não mapear)"] + list(df.columns)
         c1, c2 = st.columns(2)
 
@@ -1434,6 +1447,7 @@ def main() -> None:
                             )
                             st.session_state.pop("_plan_preview", None)
                             st.success(f"✅ Plano confirmado e salvo: {len(mapped):,} registros.")
+                            st.info("💡 Agora confirme os **Assets** para o cruzamento rodar automaticamente.")
                         if pc2.button("❌ Cancelar", key="cancel_plan_preview"):
                             st.session_state.pop("_plan_preview", None)
                             st.rerun()
@@ -1480,7 +1494,7 @@ def main() -> None:
                                 username=username,
                             )
                             st.session_state.pop("_assets_preview", None)
-                            st.success(f"Assets confirmados e salvos: {len(mapped_a):,} registros.")
+                            st.success(f"✅ Assets confirmados e salvos: {len(mapped_a):,} registros. O cruzamento será recalculado automaticamente.")
                         if ac2.button("❌ Cancelar", key="cancel_assets_preview"):
                             st.session_state.pop("_assets_preview", None)
                             st.rerun()
@@ -1502,8 +1516,14 @@ def main() -> None:
                     st.warning("Mapeie **Nome da Campanha**, **Grupo de Anúncio** ou **Anúncio** em ambas as bases para habilitar o cruzamento.")
                 else:
                     cx1, cx2, cx3 = st.columns([3, 2, 2])
-                    fuzzy_threshold = cx1.slider("Threshold Fuzzy (%)", 50, 100, 80, key="auto_thresh")
-                    use_fuzzy_merge = cx2.checkbox("🔀 Correspondência fuzzy", value=True, key="auto_fuzzy")
+                    fuzzy_threshold = cx1.slider(
+                        "Threshold Fuzzy (%)", 50, 100, 80, key="auto_thresh",
+                        help="Porcentagem mínima de similaridade para considerar dois nomes como correspondentes. Valores altos exigem maior semelhança; valores baixos aceitam correspondências mais distantes.",
+                    )
+                    use_fuzzy_merge = cx2.checkbox(
+                        "🔀 Correspondência fuzzy", value=True, key="auto_fuzzy",
+                        help="Quando ativado, tenta casar nomes de campanhas/grupos mesmo com pequenas diferenças de escrita. Desative para usar apenas correspondência exata.",
+                    )
 
                     cx3.write("")
                     if cx3.button("🔄 Salvar e Recalcular", type="primary", key="btn_recalc_cross"):
@@ -1903,7 +1923,21 @@ def main() -> None:
                     _mask = _mask | filtered[_tc].astype(str).str.lower().str.contains(_q, na=False)
                 filtered = filtered[_mask]
 
-        st.caption(f"Exibindo **{len(filtered):,}** de **{len(base):,}** registros")
+        _active_filters = sum([
+            sel_client     != "(Todos)",
+            sel_sys_camp   != "(Todos)",
+            sel_asset_camp != "(Todos)",
+            sel_vehicle    != "(Todos)",
+            sel_vstatus    != "(Todos)",
+            bool(sel_search_dash.strip()),
+        ])
+        if _active_filters:
+            st.caption(
+                f"Exibindo **{len(filtered):,}** de **{len(base):,}** registros  "
+                f"·  🔵 **{_active_filters} filtro{'s' if _active_filters > 1 else ''} ativo{'s' if _active_filters > 1 else ''}**"
+            )
+        else:
+            st.caption(f"Exibindo **{len(filtered):,}** de **{len(base):,}** registros")
 
         # ── Item 13: alertas de campanhas encerrando em ≤7 dias ──────────────
         _today = pd.Timestamp.now().normalize()
@@ -2174,6 +2208,7 @@ def main() -> None:
                     "Linha do cabeçalho", 1, 100,
                     value=saved_cfg["header_row"] if saved_cfg else 1,
                     key="camp_sheet_hrow",
+                    help="Número da linha onde ficam os nomes das colunas na planilha (normalmente 1).",
                 )
 
                 # Preview columns to map
@@ -3075,8 +3110,10 @@ def main() -> None:
                             if _ts_parts:
                                 st.caption("🕐 " + "  ·  ".join(_ts_parts))
 
-                            # ── Item 40: Notas por veículo ────────────────────
-                            with st.expander(f"💬 Notas — {vname}", expanded=False):
+                            # ── Item 40: Notas + Histórico em tabs ────────────
+                            _tab_notes, _tab_hist = st.tabs(["💬 Notas", "📋 Histórico"])
+
+                            with _tab_notes:
                                 _notes = get_vehicle_notes(vid)
                                 if _notes:
                                     for _nt in _notes:
@@ -3096,12 +3133,12 @@ def main() -> None:
                                     placeholder="Observação, ocorrência, contexto…",
                                     label_visibility="collapsed",
                                 )
-                                if st.button("💬 Salvar nota", key=f"note_save_{vid}"):
+                                if st.button("💬 Salvar nota", type="primary", key=f"note_save_{vid}"):
                                     if _new_note.strip():
                                         add_vehicle_note(vid, cid, username, _new_note.strip())
                                         st.rerun()
 
-                            with st.expander(f"📋 Histórico de atualizações — {vname}", expanded=False):
+                            with _tab_hist:
                                 _log = get_ingestion_log(cid, vid, limit=20)
                                 if not _log:
                                     st.caption("Nenhuma atualização registrada.")
@@ -3126,7 +3163,7 @@ def main() -> None:
                                                 try:
                                                     restore_ingestion_from_log(_e["id"])
                                                     st.session_state.pop(f"confirm_rb_{_e['id']}", None)
-                                                    st.success("Versão restaurada com sucesso!")
+                                                    st.success("✅ Versão restaurada com sucesso!")
                                                     st.rerun()
                                                 except Exception as _rb_exc:
                                                     st.error(str(_rb_exc))
@@ -3166,7 +3203,9 @@ def main() -> None:
                                                         key=f"al_enab_{cid}_{_atype}")
                                 _ka4.write("")
                                 if _ka4.button("💾", key=f"al_save_{cid}_{_atype}", help="Salvar alerta"):
-                                    if _ae:
+                                    if _email and "@" not in _email:
+                                        st.error(f"E-mail inválido: **{_email}**. Use o formato usuario@dominio.com.")
+                                    elif _ae:
                                         update_alert_config(_ae["id"], int(_thr), _email, _enab)
                                     else:
                                         save_alert_config(cid, _atype, int(_thr), _email, _enab,
@@ -3349,7 +3388,7 @@ def main() -> None:
                         placeholder="usuario@exemplo.com",
                     )
                     bc1, bc2 = st.columns(2)
-                    if bc1.button("💾 Salvar", key=f"eu_save_{uname}"):
+                    if bc1.button("💾 Salvar", type="primary", key=f"eu_save_{uname}"):
                         update_user(
                             uname,
                             new_password=new_pw_val.strip() or None,
@@ -3425,11 +3464,14 @@ def main() -> None:
                 _rr_new_client = _ra1.selectbox("Cliente", _rr_clients, key="rr_new_client")
                 _rr_new_email  = _ra2.text_input("E-mail", key="rr_new_email", placeholder="destinatario@exemplo.com")
                 _ra3.write(""); _ra3.write("")
-                if _ra3.button("➕ Add", key="rr_add"):
+                if _ra3.button("➕ Add", type="primary", key="rr_add"):
                     if _rr_new_email.strip():
-                        add_report_recipient(_rr_new_client, _rr_new_email.strip())
-                        st.success(f"Adicionado: {_rr_new_email}")
-                        st.rerun()
+                        if "@" not in _rr_new_email:
+                            st.error("E-mail inválido. Use o formato usuario@dominio.com.")
+                        else:
+                            add_report_recipient(_rr_new_client, _rr_new_email.strip())
+                            st.success(f"✅ Adicionado: {_rr_new_email}")
+                            st.rerun()
                     else:
                         st.warning("Informe um e-mail.")
 
@@ -3444,9 +3486,9 @@ def main() -> None:
                 help="Sessões sem atividade por mais deste tempo serão encerradas automaticamente.",
                 key="session_timeout_input",
             )
-            if st.button("💾 Salvar timeout", key="save_timeout"):
+            if st.button("💾 Salvar timeout", type="primary", key="save_timeout"):
                 set_system_config("session_timeout_hours", str(_new_timeout))
-                st.success(f"Timeout atualizado para {_new_timeout}h.")
+                st.success(f"✅ Timeout atualizado para {_new_timeout}h.")
 
         # ── Item 43: Histórico de logins por usuário ──────────────────────────
         if role == "admin":
