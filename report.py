@@ -406,8 +406,14 @@ def _grouped_table(rows: pd.DataFrame, cols: list[tuple[str, str]],
 
     for camp_name, grp in groups:
         client = grp["sys_client"].iloc[0] if "sys_client" in grp.columns else ""
-        subtitle = f" &nbsp;·&nbsp; {client}" if client else ""
         count = len(grp)
+
+        client_tag = (
+            f'<span style="background:{header_fg};color:#fff;'
+            f'border-radius:4px;padding:2px 7px;font-size:10px;'
+            f'font-weight:700;letter-spacing:.4px;margin-right:8px;'
+            f'text-transform:uppercase">{client}</span>'
+        ) if client else ""
 
         # Campaign group header
         html += (
@@ -415,9 +421,9 @@ def _grouped_table(rows: pd.DataFrame, cols: list[tuple[str, str]],
             f'<div style="background:{header_bg};padding:7px 12px;'
             f'display:flex;align-items:center;justify-content:space-between;'
             f'border-top:2px solid {header_fg}33">'
-            f'<span style="font-size:12px;font-weight:700;color:{header_fg}">'
-            f'📢 {camp_name}'
-            f'<span style="font-weight:400;opacity:.75">{subtitle}</span>'
+            f'<span style="font-size:12px;font-weight:700;color:{header_fg};'
+            f'display:flex;align-items:center">'
+            f'{client_tag}📢 {camp_name}'
             f'</span>'
             f'<span style="background:{header_fg};color:#fff;border-radius:10px;'
             f'padding:1px 8px;font-size:11px;font-weight:700">{count}</span>'
@@ -513,8 +519,8 @@ def build_html(df: pd.DataFrame, no_data: list[dict] | None = None) -> str:
     ending   = ending.sort_values("_dias")
     upcoming = df[(df["_status"] == "📅 Aguardando início") & (df["_dias"] <= 7)].copy()
     upcoming = upcoming.sort_values("_dias")
-    # 30-day window for recently ended
-    ended    = df[(df["_status"] == "🏁 Encerrada") & (df["_dias"] >= -30)].copy()
+    # 15-day window for recently ended
+    ended    = df[(df["_status"] == "🏁 Encerrada") & (df["_dias"] >= -15)].copy()
     ended    = ended.sort_values("_dias", ascending=False)
 
     n_active   = len(active)
@@ -528,7 +534,7 @@ def build_html(df: pd.DataFrame, no_data: list[dict] | None = None) -> str:
         + _summary_pill("Em veiculação", n_active, "#dcfce7")
         + _summary_pill("Encerrando (7d)", n_ending, "#fef3c7")
         + _summary_pill("Iniciando (7d)", n_upcoming, "#dbeafe")
-        + _summary_pill("Encerrados (30d)", n_ended, "#f1f5f9")
+        + _summary_pill("Encerrados (15d)", n_ended, "#f1f5f9")
         + '</div>'
     )
 
@@ -540,16 +546,48 @@ def build_html(df: pd.DataFrame, no_data: list[dict] | None = None) -> str:
                    ending, PLAN_COLS, *sc["ending"], days_col=True)
         + _section("📅 Iniciando nos próximos 7 dias", "novos criativos",
                    upcoming, PLAN_COLS, *sc["upcoming"], days_col=True)
-        + _section("🏁 Encerrados recentemente", "últimos 30 dias",
+        + _section("🏁 Encerrados recentemente", "últimos 15 dias",
                    ended, PLAN_COLS, *sc["ended"], days_col=True)
         + _no_data_section(no_data or [])
     )
 
+    pdf_filename = f"relatorio_campanhas_{datetime.now().strftime('%Y%m%d')}.pdf"
+
     return f"""<!DOCTYPE html>
 <html lang="pt-BR">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+  <style>
+    #pdf-btn {{
+      position:fixed;bottom:24px;right:24px;z-index:999;
+      background:#1e293b;color:#fff;border:none;border-radius:8px;
+      padding:10px 18px;font-size:13px;font-weight:600;cursor:pointer;
+      box-shadow:0 4px 12px rgba(0,0,0,.25);display:flex;align-items:center;gap:6px;
+    }}
+    #pdf-btn:hover{{background:#334155}}
+    @media print {{
+      #pdf-btn{{display:none!important}}
+      body{{padding:0;background:#fff}}
+    }}
+  </style>
+</head>
 <body style="margin:0;padding:24px;background:#f0f4f8;font-family:Arial,Helvetica,sans-serif">
-  <div style="max-width:740px;margin:0 auto;background:#fff;border-radius:10px;
+
+  <button id="pdf-btn" onclick="
+    document.getElementById('pdf-btn').style.display='none';
+    html2pdf().set({{
+      margin:10,
+      filename:'{pdf_filename}',
+      image:{{type:'jpeg',quality:.95}},
+      html2canvas:{{scale:2,useCORS:true}},
+      jsPDF:{{unit:'mm',format:'a4',orientation:'portrait'}}
+    }}).from(document.getElementById('report-wrap')).save()
+    .then(()=>{{document.getElementById('pdf-btn').style.display='flex'}});
+  ">⬇️ Baixar PDF</button>
+
+  <div id="report-wrap" style="max-width:740px;margin:0 auto;background:#fff;border-radius:10px;
                overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,.08)">
 
     <!-- Header -->

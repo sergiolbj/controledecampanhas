@@ -40,4 +40,4 @@ def render(username: str, role: str) -> None:
             "text/html",
             key="rpt_download",
         )
-        _stc.html(_html_rpt, height=800, scrolling=True)
+        _stc.html(_html_rpt, height=900, scrolling=True)
