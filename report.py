@@ -441,12 +441,12 @@ def _grouped_table(rows: pd.DataFrame, cols: list[tuple[str, str]],
             f'text-transform:uppercase">{client}</span>'
         ) if client else ""
 
-        # Campaign group header — left border accent uses client color
+        # Campaign group header
         html += (
             f'<tr><td colspan="{ncols}" style="padding:0">'
             f'<div style="background:{header_bg};padding:7px 12px;'
             f'display:flex;align-items:center;justify-content:space-between;'
-            f'border-top:1px solid #e2e8f0;border-left:4px solid {c_color}">'
+            f'border-top:1px solid #e2e8f0">'
             f'<span style="font-size:12px;font-weight:700;color:{header_fg};'
             f'display:flex;align-items:center">'
             f'{client_tag}📢 {camp_name}'
@@ -463,15 +463,14 @@ def _grouped_table(rows: pd.DataFrame, cols: list[tuple[str, str]],
         for i, (_, row) in enumerate(grp.iterrows()):
             bg = "#f8fafc" if i % 2 == 0 else "#ffffff"
             cells = ""
-            for j, (col, _) in enumerate(available):
+            for col, _ in available:
                 val = row.get(col, "")
                 if col in ("start_date", "end_date"):
                     val = _fmt_date(val)
                 else:
                     val = str(val) if pd.notna(val) else "—"
-                left = f"border-left:4px solid {c_color};" if j == 0 else ""
                 cells += (
-                    f'<td style="{left}padding:5px 10px;font-size:12px;'
+                    f'<td style="padding:5px 10px;font-size:12px;'
                     f'color:#1e293b;border-bottom:1px solid #f1f5f9">{val}</td>'
                 )
             if days_col:
