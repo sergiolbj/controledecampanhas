@@ -1007,6 +1007,49 @@ def delete_alert_config(alert_id: int) -> None:
     st.cache_data.clear()
 
 
+@st.cache_data(ttl=60, show_spinner=False)
+def get_pending_vehicles() -> list[dict]:
+    """Retorna veículos ativos sem plano e/ou sem assets no ingestion_cache."""
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    c.id          AS campaign_id,
+                    c.name        AS campaign_name,
+                    c.client_name,
+                    v.id          AS vehicle_id,
+                    v.name        AS vehicle_name,
+                    EXISTS(SELECT 1 FROM ingestion_cache ic
+                           WHERE ic.vehicle_id = v.id AND ic.data_type = 'plan')   AS has_plan,
+                    EXISTS(SELECT 1 FROM ingestion_cache ic
+                           WHERE ic.vehicle_id = v.id AND ic.data_type = 'assets') AS has_assets
+                FROM vehicles v
+                JOIN campaigns c ON c.id = v.campaign_id
+                WHERE COALESCE(c.archived, false) = false
+                  AND (
+                    NOT EXISTS(SELECT 1 FROM ingestion_cache ic
+                               WHERE ic.vehicle_id = v.id AND ic.data_type = 'plan')
+                    OR
+                    NOT EXISTS(SELECT 1 FROM ingestion_cache ic
+                               WHERE ic.vehicle_id = v.id AND ic.data_type = 'assets')
+                  )
+                ORDER BY c.name, v.name
+            """)
+            rows = cur.fetchall()
+    return [
+        {
+            "campaign_id":   r[0],
+            "campaign_name": r[1],
+            "client_name":   r[2],
+            "vehicle_id":    r[3],
+            "vehicle_name":  r[4],
+            "has_plan":      r[5],
+            "has_assets":    r[6],
+        }
+        for r in rows
+    ]
+
+
 @st.cache_data(ttl=120, show_spinner=False)
 def get_mapping_coverage() -> list[dict]:
     """Para cada veículo com dados no ingestion_cache, retorna % de campos mapeados."""

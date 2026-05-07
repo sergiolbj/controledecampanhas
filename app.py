@@ -18,7 +18,7 @@ from auth import (
     save_campaign_sheets_config, load_campaign_sheets_config,
     has_default_password, get_ingestion_timestamps, get_ingestion_log,
     get_alert_configs, save_alert_config, update_alert_config, delete_alert_config,
-    get_mapping_coverage, clear_campaign_data, restore_ingestion_from_log,
+    get_mapping_coverage, get_pending_vehicles, clear_campaign_data, restore_ingestion_from_log,
     change_own_password, archive_campaign,
     get_report_recipients, add_report_recipient, toggle_report_recipient, delete_report_recipient,
     log_audit, get_audit_log,
@@ -2362,6 +2362,60 @@ def main() -> None:
         if role not in ["admin", "editor"]:
             st.warning("🔒 Acesso negado.")
             return
+
+        # ── Veículos pendentes de mapeamento ──────────────────────────────────
+        _pending_vehs = get_pending_vehicles()
+        if _pending_vehs:
+            with st.expander(
+                f"⚠️ **{len(_pending_vehs)} veículo(s) pendentes de mapeamento** — clique para ver",
+                expanded=True,
+            ):
+                # Filtros rápidos
+                _pv_col1, _pv_col2 = st.columns(2)
+                _pv_filter_status = _pv_col1.selectbox(
+                    "Filtrar por pendência",
+                    ["— todos —", "Sem plano", "Sem assets", "Sem plano e sem assets"],
+                    key="pv_filter_status",
+                )
+                _pv_filter_camp = _pv_col2.text_input(
+                    "Filtrar por campanha", key="pv_filter_camp", placeholder="nome…"
+                )
+
+                _pv_filtered = _pending_vehs
+                if _pv_filter_status == "Sem plano":
+                    _pv_filtered = [p for p in _pv_filtered if not p["has_plan"]]
+                elif _pv_filter_status == "Sem assets":
+                    _pv_filtered = [p for p in _pv_filtered if not p["has_assets"]]
+                elif _pv_filter_status == "Sem plano e sem assets":
+                    _pv_filtered = [p for p in _pv_filtered if not p["has_plan"] and not p["has_assets"]]
+                if _pv_filter_camp.strip():
+                    _pv_filtered = [p for p in _pv_filtered if _pv_filter_camp.lower() in p["campaign_name"].lower()]
+
+                for _pv in _pv_filtered:
+                    _pv_c1, _pv_c2 = st.columns([6, 2])
+                    _plan_badge   = "✅ Plano"   if _pv["has_plan"]   else "❌ Sem plano"
+                    _assets_badge = "✅ Assets"  if _pv["has_assets"] else "❌ Sem assets"
+                    _plan_color   = "#3fb950" if _pv["has_plan"]   else "#f85149"
+                    _assets_color = "#3fb950" if _pv["has_assets"] else "#f85149"
+                    _pv_c1.markdown(
+                        f"**{_pv['vehicle_name']}**  ·  {_pv['campaign_name']}  ·  `{_pv['client_name'] or '—'}`  "
+                        f"<span style='color:{_plan_color}'>{_plan_badge}</span>  "
+                        f"<span style='color:{_assets_color}'>{_assets_badge}</span>",
+                        unsafe_allow_html=True,
+                    )
+                    if _pv_c2.button(
+                        "🗺 Ir para mapeamento",
+                        key=f"pv_goto_{_pv['vehicle_id']}",
+                        use_container_width=True,
+                    ):
+                        st.session_state["page"]              = "📥 Mapeamento & Cruzamento"
+                        st.session_state["cfg_campaign_id"]   = _pv["campaign_id"]
+                        st.session_state["cfg_campaign_name"] = _pv["campaign_name"]
+                        st.session_state["cfg_vehicle_id"]    = _pv["vehicle_id"]
+                        st.session_state["cfg_vehicle_name"]  = _pv["vehicle_name"]
+                        st.rerun()
+
+                st.caption(f"{len(_pv_filtered)} veículo(s) exibido(s)")
 
         # ── Item 29: criação em lote via planilha ─────────────────────────────
         with st.expander("📥 Criar campanhas e veículos em lote", expanded=False):
