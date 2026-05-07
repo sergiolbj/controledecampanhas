@@ -176,6 +176,17 @@ def init_db() -> None:
                 )
             """)
             cur.execute("""
+                CREATE TABLE IF NOT EXISTS alias_mapping (
+                    id         SERIAL PRIMARY KEY,
+                    field      TEXT NOT NULL,
+                    source_term TEXT NOT NULL,
+                    target_term TEXT NOT NULL,
+                    created_by  TEXT,
+                    created_at  TIMESTAMP DEFAULT NOW(),
+                    UNIQUE(field, source_term)
+                )
+            """)
+            cur.execute("""
                 ALTER TABLE ingestion_cache
                 ADD COLUMN IF NOT EXISTS updated_by TEXT NOT NULL DEFAULT ''
             """)
@@ -259,7 +270,6 @@ def validate_session(token: str) -> tuple[str, str] | None:
             idle = (now - datetime.fromisoformat(last_activity)).total_seconds() / 3600
             if idle > timeout_hours:
                 delete_session(token)
-                st.cache_data.clear()
                 return None
         except ValueError:
             pass
@@ -271,7 +281,6 @@ def validate_session(token: str) -> tuple[str, str] | None:
                     "UPDATE sessions SET last_activity=%s WHERE token=%s",
                     (now.isoformat(), token),
                 )
-        st.cache_data.clear()
     except Exception:
         pass
     return username, role
@@ -372,7 +381,10 @@ def save_ingestion(campaign_id: int, vehicle_id: int, data_type: str,
                 VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
             """, (campaign_id, vehicle_id, data_type, username, row_count, source_info,
                   psycopg2.Binary(blob), json.dumps(mapping, default=str)))
-    st.cache_data.clear()
+    get_ingestion_timestamps.clear()
+    get_ingestion_log.clear()
+    get_mapping_coverage.clear()
+    get_pending_vehicles.clear()
 
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -412,12 +424,12 @@ def save_user_state(username: str, campaign_id: int, vehicle_id: int) -> None:
                 INSERT INTO user_state
                 (username, campaign_id, vehicle_id, updated_at)
                 VALUES (%s,%s,%s,CURRENT_TIMESTAMP)
-                ON CONFLICT (username) DO UPDATE SET 
+                ON CONFLICT (username) DO UPDATE SET
                     campaign_id = EXCLUDED.campaign_id,
                     vehicle_id = EXCLUDED.vehicle_id,
                     updated_at = CURRENT_TIMESTAMP
             """, (username, campaign_id, vehicle_id))
-    st.cache_data.clear()
+    load_user_state.clear()
 
 
 @st.cache_data(ttl=60, show_spinner=False)
@@ -465,7 +477,8 @@ def create_campaign(name: str, client_name: str = "") -> int:
                 (name.strip(), client_name.strip()),
             )
             cid = cur.fetchone()[0]
-    st.cache_data.clear()
+    get_campaigns.clear()
+    get_alert_counts.clear()
     return cid
 
 
@@ -476,7 +489,7 @@ def update_campaign_client(campaign_id: int, client_name: str) -> None:
                 "UPDATE campaigns SET client_name=%s WHERE id=%s",
                 (client_name.strip(), campaign_id),
             )
-    st.cache_data.clear()
+    get_campaigns.clear()
 
 
 @st.cache_data(ttl=60, show_spinner=False)
@@ -497,7 +510,7 @@ def add_user(username: str, password: str, role: str, email: str = "") -> None:
                 "INSERT INTO users (username, password_hash, role, email) VALUES (%s,%s,%s,%s)",
                 (username.strip(), _hash(password), role, email.strip()),
             )
-    st.cache_data.clear()
+    get_users.clear()
 
 
 def update_user(username: str, new_password: str | None = None,
@@ -513,14 +526,14 @@ def update_user(username: str, new_password: str | None = None,
                 cur.execute("UPDATE users SET role=%s WHERE username=%s", (new_role, username))
             if new_email is not None:
                 cur.execute("UPDATE users SET email=%s WHERE username=%s", (new_email.strip(), username))
-    st.cache_data.clear()
+    get_users.clear()
 
 
 def delete_user(username: str) -> None:
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute("DELETE FROM users WHERE username=%s", (username,))
-    st.cache_data.clear()
+    get_users.clear()
 
 
 # ── Report recipients ─────────────────────────────────────────────────────────
@@ -551,21 +564,21 @@ def add_report_recipient(client_name: str, email: str) -> None:
                 "ON CONFLICT (client_name, email) DO UPDATE SET active=true",
                 (client_name.strip(), email.strip()),
             )
-    st.cache_data.clear()
+    get_report_recipients.clear()
 
 
 def toggle_report_recipient(recipient_id: int, active: bool) -> None:
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute("UPDATE report_recipients SET active=%s WHERE id=%s", (active, recipient_id))
-    st.cache_data.clear()
+    get_report_recipients.clear()
 
 
 def delete_report_recipient(recipient_id: int) -> None:
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute("DELETE FROM report_recipients WHERE id=%s", (recipient_id,))
-    st.cache_data.clear()
+    get_report_recipients.clear()
 
 
 # ── System config ─────────────────────────────────────────────────────────────
@@ -589,7 +602,7 @@ def set_system_config(key: str, value: str) -> None:
                 "ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value",
                 (key, value),
             )
-    st.cache_data.clear()
+    # get_system_config is not cached (reads directly from DB), no cache to clear
 
 
 # ── Audit log ─────────────────────────────────────────────────────────────────
@@ -653,14 +666,14 @@ def add_vehicle_note(vehicle_id: int, campaign_id: int, username: str, note: str
                 "VALUES (%s,%s,%s,%s)",
                 (vehicle_id, campaign_id, username, note.strip()),
             )
-    st.cache_data.clear()
+    get_vehicle_notes.clear()
 
 
 def delete_vehicle_note(note_id: int) -> None:
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute("DELETE FROM vehicle_notes WHERE id=%s", (note_id,))
-    st.cache_data.clear()
+    get_vehicle_notes.clear()
 
 
 # ── Login log ─────────────────────────────────────────────────────────────────
@@ -755,7 +768,7 @@ def add_client(name: str) -> None:
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute("INSERT INTO clients (name) VALUES (%s) ON CONFLICT DO NOTHING", (name.strip(),))
-    st.cache_data.clear()
+    get_clients.clear()
 
 
 def delete_client(name: str) -> None:
@@ -765,7 +778,8 @@ def delete_client(name: str) -> None:
             cur.execute("DELETE FROM user_client_access WHERE client_name=%s", (name,))
             cur.execute("UPDATE campaigns SET client_name='' WHERE client_name=%s", (name,))
             cur.execute("UPDATE mapping_templates SET client_name='' WHERE client_name=%s", (name,))
-    st.cache_data.clear()
+    get_clients.clear()
+    get_campaigns.clear()
 
 
 def rename_client(old_name: str, new_name: str) -> None:
@@ -777,13 +791,14 @@ def rename_client(old_name: str, new_name: str) -> None:
             cur.execute("UPDATE clients SET name=%s WHERE name=%s", (new_name, old_name))
             cur.execute("UPDATE campaigns SET client_name=%s WHERE client_name=%s", (new_name, old_name))
             cur.execute("UPDATE mapping_templates SET client_name=%s WHERE client_name=%s", (new_name, old_name))
-            
+
             # Handle user_client_access safely
             cur.execute("UPDATE user_client_access SET client_name=%s WHERE client_name=%s", (new_name, old_name))
             cur.execute("DELETE FROM user_client_access WHERE client_name=%s", (old_name,))
             # Delete old client if rename was successful
             cur.execute("DELETE FROM clients WHERE name=%s AND EXISTS (SELECT 1 FROM clients WHERE name=%s)", (old_name, new_name))
-    st.cache_data.clear()
+    get_clients.clear()
+    get_campaigns.clear()
 
 
 def get_user_clients(username: str) -> list[str]:
@@ -807,7 +822,7 @@ def set_user_clients(username: str, clients: list[str]) -> None:
                         "INSERT INTO user_client_access (username, client_name) VALUES (%s,%s) ON CONFLICT DO NOTHING",
                         (username, c.strip()),
                     )
-    st.cache_data.clear()
+    get_users.clear()
 
 
 @st.cache_data(ttl=60, show_spinner=False)
@@ -830,7 +845,8 @@ def create_vehicle(campaign_id: int, name: str) -> int:
                 (campaign_id, name.strip()),
             )
             vid = cur.fetchone()[0]
-    st.cache_data.clear()
+    get_vehicles.clear()
+    get_campaigns.clear()
     return vid
 
 
@@ -838,35 +854,40 @@ def archive_campaign(campaign_id: int, archived: bool = True) -> None:
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute("UPDATE campaigns SET archived=%s WHERE id=%s", (archived, campaign_id))
-    st.cache_data.clear()
+    get_campaigns.clear()
+    get_alert_counts.clear()
 
 
 def rename_campaign(campaign_id: int, new_name: str) -> None:
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute("UPDATE campaigns SET name=%s WHERE id=%s", (new_name.strip(), campaign_id))
-    st.cache_data.clear()
+    get_campaigns.clear()
+    get_alert_counts.clear()
 
 
 def delete_campaign(campaign_id: int) -> None:
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute("DELETE FROM campaigns WHERE id=%s", (campaign_id,))
-    st.cache_data.clear()
+    get_campaigns.clear()
+    get_alert_counts.clear()
 
 
 def rename_vehicle(vehicle_id: int, new_name: str) -> None:
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute("UPDATE vehicles SET name=%s WHERE id=%s", (new_name.strip(), vehicle_id))
-    st.cache_data.clear()
+    get_vehicles.clear()
+    get_campaigns.clear()
 
 
 def delete_vehicle(vehicle_id: int) -> None:
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute("DELETE FROM vehicles WHERE id=%s", (vehicle_id,))
-    st.cache_data.clear()
+    get_vehicles.clear()
+    get_campaigns.clear()
 
 
 def has_default_password(username: str) -> bool:
@@ -896,7 +917,10 @@ def clear_campaign_data(campaign_id: int) -> int:
                 (campaign_id,),
             )
             count = cur.rowcount
-    st.cache_data.clear()
+    get_ingestion_timestamps.clear()
+    get_ingestion_log.clear()
+    get_mapping_coverage.clear()
+    get_pending_vehicles.clear()
     return count
 
 
@@ -934,7 +958,10 @@ def restore_ingestion_from_log(log_id: int) -> None:
             """, (campaign_id, vehicle_id, data_type,
                   psycopg2.Binary(blob_bytes), json.dumps(mapping, default=str),
                   f"[rollback de log_id={log_id}] {source_info}"))
-    st.cache_data.clear()
+    get_ingestion_timestamps.clear()
+    get_ingestion_log.clear()
+    get_mapping_coverage.clear()
+    get_pending_vehicles.clear()
 
 
 def change_own_password(username: str, current_pw: str, new_pw: str) -> bool:
@@ -951,7 +978,7 @@ def change_own_password(username: str, current_pw: str, new_pw: str) -> bool:
                 "UPDATE users SET password_hash=%s WHERE username=%s",
                 (_hash(new_pw), username),
             )
-    st.cache_data.clear()
+    get_users.clear()
     return True
 
 
@@ -987,7 +1014,8 @@ def save_alert_config(campaign_id: int, alert_type: str, threshold: int,
                 VALUES (%s,%s,%s,%s,%s,%s)
                 ON CONFLICT DO NOTHING
             """, (campaign_id, alert_type, threshold, email_to.strip(), enabled, created_by))
-    st.cache_data.clear()
+    get_alert_configs.clear()
+    get_alert_counts.clear()
 
 
 def update_alert_config(alert_id: int, threshold: int, email_to: str, enabled: bool) -> None:
@@ -997,14 +1025,16 @@ def update_alert_config(alert_id: int, threshold: int, email_to: str, enabled: b
                 "UPDATE alert_configs SET threshold=%s, email_to=%s, enabled=%s WHERE id=%s",
                 (threshold, email_to.strip(), enabled, alert_id),
             )
-    st.cache_data.clear()
+    get_alert_configs.clear()
+    get_alert_counts.clear()
 
 
 def delete_alert_config(alert_id: int) -> None:
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute("DELETE FROM alert_configs WHERE id=%s", (alert_id,))
-    st.cache_data.clear()
+    get_alert_configs.clear()
+    get_alert_counts.clear()
 
 
 @st.cache_data(ttl=60, show_spinner=False)
@@ -1175,7 +1205,7 @@ def save_campaign_sheets_config(
                 "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                 (sheet_url, sheet_name, col_cliente, col_campanha, col_inicio, col_fim, col_veiculos, col_link_plano, col_link_dash, header_row),
             )
-    st.cache_data.clear()
+    load_campaign_sheets_config.clear()
 
 
 @st.cache_data(ttl=120, show_spinner=False)
@@ -1202,3 +1232,43 @@ def load_campaign_sheets_config() -> dict | None:
         "col_link_dash": row[8],
         "header_row": row[9],
     }
+
+
+# ── Alias mapping ─────────────────────────────────────────────────────────────
+
+@st.cache_data(ttl=300, show_spinner=False)
+def get_alias_mappings() -> list[dict]:
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, field, source_term, target_term, created_by, created_at "
+                "FROM alias_mapping ORDER BY field, source_term"
+            )
+            rows = cur.fetchall()
+    return [
+        {"id": r[0], "field": r[1], "source_term": r[2],
+         "target_term": r[3], "created_by": r[4], "created_at": r[5]}
+        for r in rows
+    ]
+
+
+def save_alias(field: str, source_term: str, target_term: str, username: str = "") -> None:
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO alias_mapping (field, source_term, target_term, created_by)
+                   VALUES (%s, %s, %s, %s)
+                   ON CONFLICT (field, source_term) DO UPDATE
+                   SET target_term = EXCLUDED.target_term,
+                       created_by  = EXCLUDED.created_by,
+                       created_at  = NOW()""",
+                (field, source_term, target_term, username),
+            )
+    get_alias_mappings.clear()
+
+
+def delete_alias(alias_id: int) -> None:
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM alias_mapping WHERE id=%s", (alias_id,))
+    get_alias_mappings.clear()

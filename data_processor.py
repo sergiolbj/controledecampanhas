@@ -1,9 +1,12 @@
 import io
+import logging as _logging
 import unicodedata
 
 import pandas as pd
 import requests
 from rapidfuzz import fuzz, process
+
+_log = _logging.getLogger(__name__)
 
 FIELD_LABELS: dict[str, str] = {
     "campaign_name": "Nome da Campanha",
@@ -78,23 +81,30 @@ def read_file(
     sheet_name: int | str = 0,
     header_row: int | list[int] = 0,
 ) -> pd.DataFrame | None:
-    if source_type == "upload" and file_obj is not None:
-        if file_obj.name.lower().endswith(".csv"):
-            file_obj.seek(0)
-            return _flatten_columns(pd.read_csv(file_obj, header=header_row))
-        xl = pd.ExcelFile(file_obj)
-        return _flatten_columns(xl.parse(sheet_name=sheet_name, header=header_row))
+    try:
+        if source_type == "upload" and file_obj is not None:
+            if file_obj.name.lower().endswith(".csv"):
+                file_obj.seek(0)
+                return _flatten_columns(pd.read_csv(file_obj, header=header_row))
+            xl = pd.ExcelFile(file_obj)
+            return _flatten_columns(xl.parse(sheet_name=sheet_name, header=header_row))
 
-    if source_type == "url" and url:
-        resp = requests.get(_xlsx_url(url), timeout=30)
-        resp.raise_for_status()
-        ct = resp.headers.get("content-type", "")
-        if "text/plain" in ct or "text/csv" in ct:
-            return _flatten_columns(pd.read_csv(io.StringIO(resp.text), header=header_row))
-        return _flatten_columns(
-            pd.read_excel(io.BytesIO(resp.content), sheet_name=sheet_name, header=header_row)
-        )
-    return None
+        if source_type == "url" and url:
+            resp = requests.get(_xlsx_url(url), timeout=30)
+            resp.raise_for_status()
+            ct = resp.headers.get("content-type", "")
+            if "text/plain" in ct or "text/csv" in ct:
+                return _flatten_columns(pd.read_csv(io.StringIO(resp.text), header=header_row))
+            return _flatten_columns(
+                pd.read_excel(io.BytesIO(resp.content), sheet_name=sheet_name, header=header_row)
+            )
+        return None
+    except Exception as exc:
+        _log.error("read_file falhou (source=%s url=%s file=%s): %s",
+                   source_type, url, getattr(file_obj, "name", None), exc, exc_info=True)
+        raise RuntimeError(
+            f"Não foi possível ler a planilha: {exc}"
+        ) from exc
 
 
 def apply_mapping(df: pd.DataFrame, mapping: dict[str, str]) -> pd.DataFrame:
@@ -223,6 +233,19 @@ def _per_field_score(
         av = _remove_accents(pd.Series([str(asset_row.get(f, ""))])).str.strip().str.lower().str.replace(r"\s+", " ", regex=True).iloc[0]
         scores.append(fuzz.token_sort_ratio(pv, av))
     return sum(scores) / len(scores) if scores else 0.0
+
+
+def apply_aliases(df: pd.DataFrame, aliases: list[dict], join_fields: list[str]) -> pd.DataFrame:
+    """Substitui termos conhecidos do plano pelo canonical antes do cruzamento."""
+    if not aliases:
+        return df
+    df = df.copy()
+    for alias in aliases:
+        field = alias["field"]
+        if field in df.columns and field in join_fields:
+            mask = df[field].astype(str).str.strip() == alias["source_term"].strip()
+            df.loc[mask, field] = alias["target_term"]
+    return df
 
 
 def fuzzy_merge_taxonomy(

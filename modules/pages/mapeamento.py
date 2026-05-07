@@ -7,12 +7,16 @@ from auth import (
     get_vehicles,
     get_ingestion_timestamps,
     save_ingestion,
+    get_alias_mappings,
+    save_alias,
+    delete_alias,
 )
 from data_processor import (
     PLAN_FIELDS,
     ASSET_FIELDS,
     TAXONOMY_JOIN_FIELDS,
     apply_mapping,
+    apply_aliases,
     normalize_dates,
     aggregate_assets,
     fuzzy_merge_taxonomy,
@@ -255,6 +259,8 @@ def render(username: str, role: str) -> None:
                              fuzzy_threshold, use_fuzzy_merge)
                 if st.session_state.get("_cross_sig") != cross_sig:
                     with st.spinner("Cruzando dados..."):
+                        _aliases = get_alias_mappings()
+                        plan_df_x = apply_aliases(plan_df_x, _aliases, available)
                         assets_agg = aggregate_assets(assets_df_x, available)
                         if use_fuzzy_merge:
                             matched, unmatched = fuzzy_merge_taxonomy(
@@ -351,3 +357,44 @@ def render(username: str, role: str) -> None:
                             fuzzy_df.style.background_gradient(subset=["Score (%)"], cmap="RdYlGn"),
                             use_container_width=True, hide_index=True)
                         _export_buttons(fuzzy_df, "sugestoes_fuzzy", "exp_fuzzy")
+
+                        st.divider()
+                        st.markdown("**Salvar aliases** — aceite matches para não revisar novamente:")
+                        _aliases = get_alias_mappings()
+                        _alias_keys = {(a["field"], a["source_term"]) for a in _aliases}
+                        _join_fields = [f for f in TAXONOMY_JOIN_FIELDS
+                                        if f in plan_df_x.columns and f in assets_df_x.columns]
+                        _SEP = " | "
+                        for _fi, _frow in fuzzy_df.iterrows():
+                            _src = _frow["Chave no Plano"]
+                            _tgt = _frow["Melhor Match"]
+                            _score = _frow["Score (%)"]
+                            _src_parts = _src.split(_SEP)
+                            _tgt_parts = _tgt.split(_SEP)
+                            _already = all(
+                                (jf, _src_parts[i].strip()) in _alias_keys
+                                for i, jf in enumerate(_join_fields) if i < len(_src_parts)
+                            )
+                            _ac1, _ac2, _ac3 = st.columns([4, 1, 1])
+                            _ac1.caption(f"`{_src}` → `{_tgt}` ({_score}%)")
+                            if _already:
+                                _ac2.caption("✅ salvo")
+                            else:
+                                if _ac2.button("💾 Alias", key=f"alias_save_{_fi}"):
+                                    for _i, _jf in enumerate(_join_fields):
+                                        if _i < len(_src_parts) and _i < len(_tgt_parts):
+                                            save_alias(_jf, _src_parts[_i].strip(),
+                                                       _tgt_parts[_i].strip(), username)
+                                    st.toast("Alias salvo!", icon="💾")
+                                    st.rerun()
+                            if _ac3.button("🗑", key=f"alias_del_{_fi}", help="Remover alias"):
+                                for _i, _jf in enumerate(_join_fields):
+                                    _existing = next(
+                                        (a for a in _aliases if a["field"] == _jf
+                                         and a["source_term"] == (_src_parts[_i].strip() if _i < len(_src_parts) else "")),
+                                        None,
+                                    )
+                                    if _existing:
+                                        delete_alias(_existing["id"])
+                                st.toast("Alias removido.", icon="🗑")
+                                st.rerun()

@@ -26,6 +26,7 @@ from auth import (
     get_login_history,
     get_alert_counts,
     get_system_config, set_system_config,
+    get_alias_mappings, save_alias, delete_alias,
 )
 
 COOKIE_NAME = "adops_session"
@@ -514,6 +515,9 @@ def main() -> None:
         _avail = [f for f in TAXONOMY_JOIN_FIELDS
                   if f in _pdf.columns and f in _adf.columns]
         if _avail:
+            from data_processor import apply_aliases
+            _aliases = get_alias_mappings()
+            _pdf = apply_aliases(_pdf, _aliases, _avail)
             _agg = aggregate_assets(_adf, _avail)
             _matched, _unmatched = fuzzy_merge_taxonomy(_pdf, _agg, _avail, 80)
             _matched = compute_veiculacao_status(_matched)

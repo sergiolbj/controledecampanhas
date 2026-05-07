@@ -26,7 +26,7 @@ def save_template(client: str, name: str, source_type: str, mapping: dict) -> No
                     source_type = EXCLUDED.source_type,
                     mapping_json = EXCLUDED.mapping_json
             """, (client, name, source_type, json.dumps(mapping)))
-    st.cache_data.clear()
+    load_templates.clear()
 
 
 @st.cache_data(ttl=60, show_spinner=False)
