@@ -579,41 +579,18 @@ def build_html(df: pd.DataFrame, no_data: list[dict] | None = None) -> str:
         + _no_data_section(no_data or [])
     )
 
-    pdf_filename = f"relatorio_campanhas_{datetime.now().strftime('%Y%m%d')}.pdf"
-
     return f"""<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
   <style>
-    #pdf-btn {{
-      position:fixed;bottom:24px;right:24px;z-index:999;
-      background:#1e293b;color:#fff;border:none;border-radius:8px;
-      padding:10px 18px;font-size:13px;font-weight:600;cursor:pointer;
-      box-shadow:0 4px 12px rgba(0,0,0,.25);display:flex;align-items:center;gap:6px;
-    }}
-    #pdf-btn:hover{{background:#334155}}
     @media print {{
-      #pdf-btn{{display:none!important}}
       body{{padding:0;background:#fff}}
     }}
   </style>
 </head>
 <body style="margin:0;padding:24px;background:#f0f4f8;font-family:Arial,Helvetica,sans-serif">
-
-  <button id="pdf-btn" onclick="
-    document.getElementById('pdf-btn').style.display='none';
-    html2pdf().set({{
-      margin:10,
-      filename:'{pdf_filename}',
-      image:{{type:'jpeg',quality:.95}},
-      html2canvas:{{scale:2,useCORS:true}},
-      jsPDF:{{unit:'mm',format:'a4',orientation:'portrait'}}
-    }}).from(document.getElementById('report-wrap')).save()
-    .then(()=>{{document.getElementById('pdf-btn').style.display='flex'}});
-  ">⬇️ Baixar PDF</button>
 
   <div id="report-wrap" style="max-width:740px;margin:0 auto;background:#fff;border-radius:10px;
                overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,.08)">
