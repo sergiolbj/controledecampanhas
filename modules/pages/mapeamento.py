@@ -43,8 +43,8 @@ def render(username: str, role: str) -> None:
         return
 
     # ── Wizard step indicator ─────────────────────────────────────────────
-    has_campaign = "cfg_campaign_id" in st.session_state
-    has_vehicle  = "cfg_vehicle_id"  in st.session_state
+    has_campaign = bool(st.session_state.get("cfg_campaign_id"))
+    has_vehicle  = bool(st.session_state.get("cfg_vehicle_id"))
     step = 3 if (has_campaign and has_vehicle) else (2 if has_campaign else 1)
 
     _step_bar(step)
