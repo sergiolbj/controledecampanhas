@@ -340,24 +340,31 @@ def gantt_chart(df: pd.DataFrame) -> None:
         labels={c: FIELD_LABELS.get(c, c) for c in plot.columns},
         title="📅 Timeline de Veiculação",
     )
+    _is_dark_tick = st.session_state.get("_dark_mode", False)
+    _tick_col = "#c9d1d9" if _is_dark_tick else "#0f172a"
     fig.update_yaxes(
         autorange="reversed",
         title="Campanhas",
         categoryorder="array",
         categoryarray=row_labels_ordered,
-        tickfont=dict(size=12, color="#c9d1d9")
+        tickfont=dict(size=12, color=_tick_col)
     )
     fig.update_xaxes(title="")
     fig.update_traces(textposition="inside", insidetextanchor="middle")
 
     n_bars = len(plot[["campaign_name", "vehicle"]].drop_duplicates())
+    _is_dark = st.session_state.get("_dark_mode", False)
+    _plot_bg  = "#0f172a" if _is_dark else "#ffffff"
+    _paper_bg = "#0f172a" if _is_dark else "#f8fafc"
+    _font_col = "#c9d1d9" if _is_dark else "#0f172a"
+    _grid_col = "#21262d" if _is_dark else "#e2e8f0"
     fig.update_layout(
-        plot_bgcolor  = "#0d1117",
-        paper_bgcolor = "#0d1117",
-        font_color    = "#c9d1d9",
+        plot_bgcolor  = _plot_bg,
+        paper_bgcolor = _paper_bg,
+        font_color    = _font_col,
         height        = max(450, n_bars * 40 + 180),
         legend_title  = "Veículo",
-        xaxis         = dict(showgrid=True, gridcolor="#21262d"),
+        xaxis         = dict(showgrid=True, gridcolor=_grid_col),
         yaxis         = dict(showgrid=False),
         margin        = dict(l=10, r=10, t=50, b=10),
     )

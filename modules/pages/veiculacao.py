@@ -391,10 +391,12 @@ def render(username: str, role: str) -> None:
                         "status_campanha": True, "dias_restantes": True},
             color_discrete_sequence=px.colors.qualitative.Dark24,
         )
+        _is_dark_gantt = st.session_state.get("_dark_mode", False)
+        _tick_col = "#c9d1d9" if _is_dark_gantt else "#0f172a"
         fig.update_yaxes(
             autorange="reversed", title="",
             categoryorder="array", categoryarray=row_labels_ordered,
-            tickfont=dict(size=12, color="#c9d1d9"),
+            tickfont=dict(size=12, color=_tick_col),
         )
         fig.update_xaxes(title="", tickfont=dict(size=12))
         fig.update_traces(
@@ -422,15 +424,20 @@ def render(username: str, role: str) -> None:
         n_rows = len(row_labels_ordered)
         chart_height = max(350, n_rows * 40 + 120)
         max_visible = 600
+        _is_dark  = st.session_state.get("_dark_mode", False)
+        _plot_bg  = "#0f172a" if _is_dark else "#ffffff"
+        _paper_bg = "#0f172a" if _is_dark else "#f8fafc"
+        _font_col = "#94a3b8" if _is_dark else "#475569"
+        _grid_col = "#334155" if _is_dark else "#e2e8f0"
         fig.update_layout(
-            plot_bgcolor="#0d1117",
-            paper_bgcolor="#0d1117",
-            font=dict(color="#c9d1d9", size=12),
+            plot_bgcolor=_plot_bg,
+            paper_bgcolor=_paper_bg,
+            font=dict(color=_font_col, size=12),
             title=dict(text="📅 Timeline de Campanhas", font=dict(size=15)),
             height=chart_height,
             legend_title="Veículo",
             legend=dict(font=dict(size=11)),
-            xaxis=dict(showgrid=True, gridcolor="#21262d", side="top"),
+            xaxis=dict(showgrid=True, gridcolor=_grid_col, side="top"),
             yaxis=dict(showgrid=False),
             margin=dict(l=10, r=10, t=80, b=10),
         )
@@ -444,7 +451,12 @@ def render(username: str, role: str) -> None:
 
     # ── Summary charts ────────────────────────────────────────────────────
     if not filtered.empty:
-        _BG2 = dict(paper_bgcolor="#0d1117", font_color="#c9d1d9", plot_bgcolor="#0d1117")
+        _is_dark  = st.session_state.get("_dark_mode", False)
+        _plot_bg  = "#0f172a" if _is_dark else "#ffffff"
+        _paper_bg = "#0f172a" if _is_dark else "#f8fafc"
+        _font_col = "#94a3b8" if _is_dark else "#475569"
+        _grid_col = "#334155" if _is_dark else "#e2e8f0"
+        _BG2 = dict(paper_bgcolor=_paper_bg, font_color=_font_col, plot_bgcolor=_plot_bg)
 
         ch1, ch2 = st.columns(2)
         with ch1:
@@ -474,8 +486,8 @@ def render(username: str, role: str) -> None:
             )
             fig.update_layout(
                 **_BG2, showlegend=False,
-                xaxis=dict(gridcolor="#21262d"),
-                yaxis=dict(gridcolor="#21262d"),
+                xaxis=dict(gridcolor=_grid_col),
+                yaxis=dict(gridcolor=_grid_col),
             )
             st.plotly_chart(fig, use_container_width=True)
 

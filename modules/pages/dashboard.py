@@ -402,7 +402,12 @@ def render(username: str, role: str) -> None:
             st.warning(f"Gantt indisponível: {e}")
 
         # ── Summary charts ────────────────────────────────────────────────────
-        _BG = dict(paper_bgcolor="#0d1117", font_color="#c9d1d9", plot_bgcolor="#0d1117")
+        _is_dark = st.session_state.get("_dark_mode", False)
+        _plot_bg  = "#0f172a" if _is_dark else "#ffffff"
+        _paper_bg = "#0f172a" if _is_dark else "#f8fafc"
+        _font_col = "#94a3b8" if _is_dark else "#475569"
+        _grid_col = "#334155" if _is_dark else "#e2e8f0"
+        _BG = dict(paper_bgcolor=_paper_bg, font_color=_font_col, plot_bgcolor=_plot_bg)
 
         _dash_veh_col = "sys_vehicle" if "sys_vehicle" in filtered.columns else "vehicle"
         has_status  = "veiculacao_status" in filtered.columns
@@ -434,8 +439,8 @@ def render(username: str, role: str) -> None:
                     )
                     fig.update_layout(
                         **_BG, showlegend=False,
-                        xaxis=dict(gridcolor="#21262d"),
-                        yaxis=dict(gridcolor="#21262d"),
+                        xaxis=dict(gridcolor=_grid_col),
+                        yaxis=dict(gridcolor=_grid_col),
                     )
                     st.plotly_chart(fig, use_container_width=True)
 
@@ -449,12 +454,17 @@ def render(username: str, role: str) -> None:
             )
             fig.update_layout(
                 **_BG, showlegend=False,
-                xaxis=dict(gridcolor="#21262d"),
-                yaxis=dict(gridcolor="#21262d"),
+                xaxis=dict(gridcolor=_grid_col),
+                yaxis=dict(gridcolor=_grid_col),
             )
             st.plotly_chart(fig, use_container_width=True)
 
     # ── Item 17: orçamento vs gasto ──────────────────────────────────────
+    _is_dark  = st.session_state.get("_dark_mode", False)
+    _plot_bg  = "#0f172a" if _is_dark else "#ffffff"
+    _paper_bg = "#0f172a" if _is_dark else "#f8fafc"
+    _font_col = "#94a3b8" if _is_dark else "#475569"
+    _grid_col = "#334155" if _is_dark else "#e2e8f0"
     if "budget" in filtered.columns and "spend" in filtered.columns:
         def _to_num(s):
             try:
@@ -494,8 +504,8 @@ def render(username: str, role: str) -> None:
                 color_discrete_map={"Orçamento": "#58a6ff", "Gasto": "#3fb950"},
             )
             _fig_bud.update_layout(
-                **dict(paper_bgcolor="#0d1117", font_color="#c9d1d9", plot_bgcolor="#0d1117"),
-                xaxis=dict(gridcolor="#21262d"), yaxis=dict(gridcolor="#21262d"),
+                **dict(paper_bgcolor=_paper_bg, font_color=_font_col, plot_bgcolor=_plot_bg),
+                xaxis=dict(gridcolor=_grid_col), yaxis=dict(gridcolor=_grid_col),
             )
             st.plotly_chart(_fig_bud, use_container_width=True)
             st.dataframe(_agg, use_container_width=True, hide_index=True)
