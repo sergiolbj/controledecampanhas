@@ -32,7 +32,7 @@ COOKIE_NAME = "adops_session"
 COOKIE_DAYS = 7
 
 def _cookie_manager():
-    if "_cm" not in st.session_state:
+    if not st.session_state.get("_cm"):
         st.session_state["_cm"] = stx.CookieManager()
     return st.session_state["_cm"]
 from data_processor import (
