@@ -67,7 +67,24 @@ st.markdown("""
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 
 /* ── Reset / Base ─────────────────────────────────────────────────────────── */
-*, *::before, *::after { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important; }
+/* Aplicar Inter apenas em elementos de texto — NÃO usar * pois quebra Material Icons */
+body, p, span, div, h1, h2, h3, h4, h5, h6,
+input, textarea, button, select, label, caption,
+[data-testid="stMarkdown"],
+[data-testid="stText"],
+[data-testid="stCaption"],
+[data-testid="stTextInput"] input,
+[data-testid="stTextArea"] textarea,
+[data-testid="stButton"] button,
+[data-testid="stSelectbox"],
+[data-testid="stMultiSelect"],
+[data-testid="stMetricLabel"],
+[data-testid="stMetricValue"] {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important;
+}
+/* Preserva fontes de ícone do Streamlit (Material Icons / Material Symbols) */
+.material-icons, .material-symbols-rounded, .material-symbols-outlined,
+[class*="material-"] { font-family: inherit; }
 
 /* Base escura imediata (evita flash branco antes do JS carregar) */
 html, body { background-color: #0a0e17 !important; }
