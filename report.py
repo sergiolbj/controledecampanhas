@@ -28,11 +28,19 @@ from data_processor import read_file, apply_mapping, normalize_dates  # noqa: E4
 
 # ── DB helpers ────────────────────────────────────────────────────────────────
 
-DB_URL = os.environ["DATABASE_URL"]
+def _db_url() -> str:
+    url = os.getenv("DATABASE_URL")
+    if url:
+        return url
+    try:
+        import streamlit as _st
+        return _st.secrets.get("DATABASE_URL", "")
+    except Exception:
+        return ""
 
 
 def _db():
-    return psycopg2.connect(DB_URL)
+    return psycopg2.connect(_db_url())
 
 
 def get_all_campaigns() -> list[dict]:

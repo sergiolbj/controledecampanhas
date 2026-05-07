@@ -85,7 +85,17 @@ def read_file(
         if source_type == "upload" and file_obj is not None:
             if file_obj.name.lower().endswith(".csv"):
                 file_obj.seek(0)
-                return _flatten_columns(pd.read_csv(file_obj, header=header_row))
+                raw = file_obj.read()
+                file_obj.seek(0)
+                # Detect encoding: try utf-8-sig (handles Windows BOM), fall back to latin-1
+                for _enc in ("utf-8-sig", "utf-8", "latin-1"):
+                    try:
+                        return _flatten_columns(
+                            pd.read_csv(io.BytesIO(raw), header=header_row, encoding=_enc)
+                        )
+                    except (UnicodeDecodeError, pd.errors.ParserError):
+                        continue
+                return _flatten_columns(pd.read_csv(io.BytesIO(raw), header=header_row, encoding="latin-1", on_bad_lines="skip"))
             xl = pd.ExcelFile(file_obj)
             return _flatten_columns(xl.parse(sheet_name=sheet_name, header=header_row))
 
