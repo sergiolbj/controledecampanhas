@@ -166,6 +166,11 @@ def render(username: str, role: str) -> None:
     if base is None:
         base = st.session_state.get("plan_df")
 
+    # Ensure veiculacao_status is always present, even when coming from plan_df directly
+    if isinstance(base, pd.DataFrame) and "veiculacao_status" not in base.columns:
+        base = compute_veiculacao_status(base)
+        st.session_state["merged_df"] = base
+
     if base is None:
         # ── Carregamento automático de TODAS as campanhas ─────────────────
         camps = get_campaigns(username, role)
