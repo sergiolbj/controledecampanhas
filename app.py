@@ -77,276 +77,276 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-/* ── Google Fonts ─────────────────────────────────────────────────────────── */
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 
-/* ── Reset / Base ─────────────────────────────────────────────────────────── */
-/* Definir Inter no body SEM !important para que elementos com font-family
-   explícita (Material Icons, Material Symbols) consigam sobrescrever normalmente */
-body {
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+/* ── Design tokens — Light ── */
+:root {
+  --bg:#f8fafc; --surface:#fff; --sf2:#f1f5f9; --sf3:#e2e8f0;
+  --bd:#e2e8f0; --bd2:#cbd5e1;
+  --t1:#0f172a; --t2:#475569; --t3:#94a3b8;
+  --ac:#2563eb; --ac-bg:#eff6ff; --ac-hov:#1d4ed8;
+  --ok:#10b981; --ok-bg:#f0fdf4;
+  --warn:#f59e0b; --warn-bg:#fffbeb;
+  --err:#ef4444; --err-bg:#fef2f2;
+  --topbar:60px; --sidebar:240px;
+  --r:10px; --r2:6px;
+  --sh:0 1px 3px rgba(0,0,0,.08),0 1px 2px rgba(0,0,0,.04);
+  --sh2:0 4px 16px rgba(0,0,0,.08),0 2px 4px rgba(0,0,0,.04);
 }
-/* Forçar Inter apenas nos elementos onde temos certeza que é texto (não ícone) */
-[data-testid="stTextInput"] input,
-[data-testid="stTextArea"] textarea,
-[data-testid="stNumberInput"] input,
-[data-testid="stButton"] button,
-[data-testid="stMetricLabel"] > div,
-[data-testid="stMetricValue"] > div,
-[data-testid="stCaptionContainer"] p,
-[data-testid="stMarkdownContainer"] p,
-[data-testid="stMarkdownContainer"] li,
-[data-testid="stMarkdownContainer"] h1,
-[data-testid="stMarkdownContainer"] h2,
-[data-testid="stMarkdownContainer"] h3,
-h1, h2, h3 {
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important;
+/* ── Dark ── */
+html[data-ppg-theme="dark"] {
+  --bg:#0f172a; --surface:#1e293b; --sf2:#0f172a; --sf3:#334155;
+  --bd:#334155; --bd2:#475569;
+  --t1:#f1f5f9; --t2:#94a3b8; --t3:#64748b;
+  --ac:#3b82f6; --ac-bg:rgba(59,130,246,.15); --ac-hov:#60a5fa;
+  --ok:#34d399; --ok-bg:rgba(52,211,153,.1);
+  --warn:#fbbf24; --warn-bg:rgba(251,191,36,.1);
+  --err:#f87171; --err-bg:rgba(248,113,113,.1);
+  --sh:0 1px 3px rgba(0,0,0,.4),0 1px 2px rgba(0,0,0,.3);
+  --sh2:0 4px 16px rgba(0,0,0,.4),0 2px 4px rgba(0,0,0,.3);
 }
 
-/* Base escura imediata (evita flash branco antes do JS carregar) */
-html, body { background-color: #0a0e17 !important; }
+/* ── Base ── */
+body { font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+  background:var(--bg) !important; color:var(--t1); }
+html,body { background-color:var(--bg) !important; }
+[data-testid="stTextInput"] input,[data-testid="stTextArea"] textarea,
+[data-testid="stNumberInput"] input,[data-testid="stButton"] button,
+[data-testid="stMetricLabel"]>div,[data-testid="stMetricValue"]>div,
+[data-testid="stCaptionContainer"] p,[data-testid="stMarkdownContainer"] p,
+[data-testid="stMarkdownContainer"] li,h1,h2,h3 {
+  font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif !important; }
 
-/* Esconde chrome do Streamlit */
-[data-testid="stHeader"]     { display: none !important; }
-[data-testid="stDecoration"] { display: none !important; }
-footer                        { display: none !important; }
+/* ── Streamlit chrome ── */
+[data-testid="stHeader"]     { display:none !important; }
+[data-testid="stDecoration"] { display:none !important; }
+footer                        { display:none !important; }
 
-/* ── Layout ───────────────────────────────────────────────────────────────── */
-[data-testid="stAppViewContainer"] { background: #0a0e17; }
-.block-container { padding: 2rem 2.5rem 4rem !important; max-width: 1400px; }
+/* ── Layout base ── */
+[data-testid="stAppViewContainer"] {
+  background:var(--bg) !important;
+  padding-top:var(--topbar) !important;
+}
+.block-container { padding:2rem 2.5rem 4rem !important; max-width:1400px; }
 
-/* ── Sidebar ──────────────────────────────────────────────────────────────── */
+/* ── Sidebar ── */
 [data-testid="stSidebar"] {
-  background: #0d1117 !important;
-  border-right: 1px solid #1e2530 !important;
+  background:var(--surface) !important;
+  border-right:1px solid var(--bd) !important;
+  top:var(--topbar) !important;
+  height:calc(100vh - var(--topbar)) !important;
+  transition:transform .2s ease, width .2s ease !important;
 }
-[data-testid="stSidebar"] > div:first-child { padding: 0 !important; }
-[data-testid="stSidebarContent"] { padding: 0 1rem 1.5rem !important; }
+[data-testid="stSidebar"]>div:first-child { padding:0 !important; }
+[data-testid="stSidebarContent"] { padding:0 .75rem 1.5rem !important; }
+[data-testid="stSidebarCollapseButton"] { display:none !important; }
 
-/* Nav buttons na sidebar */
+/* Sidebar nav buttons */
 [data-testid="stSidebar"] [data-testid="stButton"] button {
-  border-radius: 8px !important;
-  font-size: 0.85rem !important;
-  font-weight: 500 !important;
-  padding: 0.5rem 0.75rem !important;
-  transition: all 0.15s ease !important;
-  width: 100% !important;
-  text-align: left !important;
-  border: none !important;
-  margin-bottom: 2px !important;
-}
+  border-radius:var(--r2) !important; font-size:.84rem !important;
+  font-weight:500 !important; padding:.5rem .75rem !important;
+  transition:all .15s !important; width:100% !important;
+  text-align:left !important; border:none !important; margin-bottom:2px !important; }
 [data-testid="stSidebar"] [data-testid="stButton"] button[kind="secondary"] {
-  background: transparent !important;
-  color: #8b949e !important;
-}
+  background:transparent !important; color:var(--t2) !important; }
 [data-testid="stSidebar"] [data-testid="stButton"] button[kind="secondary"]:hover {
-  background: #161b22 !important;
-  color: #e6edf3 !important;
-}
+  background:var(--sf2) !important; color:var(--t1) !important; }
 [data-testid="stSidebar"] [data-testid="stButton"] button[kind="primary"] {
-  background: linear-gradient(135deg, #1a56db 0%, #1e40af 100%) !important;
-  color: #ffffff !important;
-  box-shadow: 0 1px 4px rgba(26,86,219,.4) !important;
-}
+  background:var(--ac-bg) !important; color:var(--ac) !important;
+  font-weight:600 !important; box-shadow:none !important; }
 
-/* ── Tipografia ───────────────────────────────────────────────────────────── */
-h1 {
-  font-size: 1.7rem !important;
-  font-weight: 700 !important;
-  color: #e6edf3 !important;
-  letter-spacing: -0.03em !important;
-  line-height: 1.2 !important;
-  margin-bottom: 0.25rem !important;
-}
-h2 { font-size: 1.2rem !important; font-weight: 600 !important; color: #cdd9e5 !important; }
-h3 { font-size: 1rem !important;   font-weight: 600 !important; color: #cdd9e5 !important; }
-p, li { color: #cdd9e5 !important; line-height: 1.6 !important; }
+/* ── Typography ── */
+h1 { font-size:1.5rem !important; font-weight:700 !important; color:var(--t1) !important;
+  letter-spacing:-.02em !important; line-height:1.2 !important; margin-bottom:.25rem !important; }
+h2 { font-size:1.15rem !important; font-weight:600 !important; color:var(--t1) !important; }
+h3 { font-size:1rem !important; font-weight:600 !important; color:var(--t1) !important; }
+p, li { color:var(--t2) !important; line-height:1.6 !important; }
 
-/* ── Metrics ──────────────────────────────────────────────────────────────── */
+/* ── Metrics ── */
 [data-testid="stMetric"] {
-  background: #111827 !important;
-  border: 1px solid #1e2530 !important;
-  border-radius: 12px !important;
-  padding: 1.1rem 1.25rem !important;
-  transition: border-color 0.15s !important;
-}
-[data-testid="stMetric"]:hover { border-color: #30363d !important; }
-[data-testid="stMetricLabel"] > div {
-  color: #6e7681 !important;
-  font-size: 0.72rem !important;
-  font-weight: 600 !important;
-  text-transform: uppercase !important;
-  letter-spacing: 0.07em !important;
-}
-[data-testid="stMetricValue"] > div {
-  color: #e6edf3 !important;
-  font-size: 2rem !important;
-  font-weight: 700 !important;
-  letter-spacing: -0.03em !important;
-}
+  background:var(--surface) !important; border:1px solid var(--bd) !important;
+  border-radius:var(--r) !important; padding:1.1rem 1.25rem !important;
+  transition:border-color .15s, box-shadow .15s !important; }
+[data-testid="stMetric"]:hover { border-color:var(--ac) !important;
+  box-shadow:0 0 0 3px rgba(37,99,235,.07) !important; }
+[data-testid="stMetricLabel"]>div { color:var(--t3) !important; font-size:.7rem !important;
+  font-weight:700 !important; text-transform:uppercase !important; letter-spacing:.07em !important; }
+[data-testid="stMetricValue"]>div { color:var(--t1) !important; font-size:1.875rem !important;
+  font-weight:700 !important; letter-spacing:-.03em !important; }
+[data-testid="stMetricDelta"] { font-size:.75rem !important; font-weight:600 !important; }
 
-/* ── Botões ───────────────────────────────────────────────────────────────── */
+/* ── Buttons ── */
 [data-testid="stButton"] button {
-  border-radius: 8px !important;
-  font-size: 0.85rem !important;
-  font-weight: 500 !important;
-  padding: 0.45rem 1rem !important;
-  transition: all 0.15s ease !important;
-  border: 1px solid transparent !important;
-  letter-spacing: 0.01em !important;
-}
+  border-radius:var(--r2) !important; font-size:.84rem !important;
+  font-weight:500 !important; padding:.45rem 1rem !important;
+  transition:all .15s !important; border:1px solid transparent !important; }
 [data-testid="stButton"] button[kind="primary"] {
-  background: linear-gradient(135deg, #1a56db 0%, #1e40af 100%) !important;
-  color: #fff !important;
-  border-color: #1a56db !important;
-  box-shadow: 0 1px 4px rgba(26,86,219,.35) !important;
-}
+  background:var(--ac) !important; color:#fff !important;
+  border-color:var(--ac) !important; }
 [data-testid="stButton"] button[kind="primary"]:hover {
-  background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%) !important;
-  box-shadow: 0 2px 8px rgba(26,86,219,.5) !important;
-  transform: translateY(-1px) !important;
-}
+  background:var(--ac-hov) !important;
+  box-shadow:0 2px 8px rgba(37,99,235,.35) !important;
+  transform:translateY(-1px) !important; }
 [data-testid="stButton"] button[kind="secondary"] {
-  background: #161b22 !important;
-  color: #cdd9e5 !important;
-  border-color: #30363d !important;
-}
+  background:var(--surface) !important; color:var(--t2) !important;
+  border-color:var(--bd) !important; }
 [data-testid="stButton"] button[kind="secondary"]:hover {
-  background: #1c2128 !important;
-  border-color: #8b949e !important;
-  color: #e6edf3 !important;
-}
-
-/* Download buttons */
+  background:var(--sf2) !important; color:var(--t1) !important;
+  border-color:var(--bd2) !important; }
 [data-testid="stDownloadButton"] button {
-  background: #161b22 !important;
-  border: 1px solid #30363d !important;
-  color: #8b949e !important;
-  border-radius: 8px !important;
-  font-size: 0.8rem !important;
-}
+  background:var(--sf2) !important; border:1px solid var(--bd) !important;
+  color:var(--t2) !important; border-radius:var(--r2) !important; font-size:.8rem !important; }
 [data-testid="stDownloadButton"] button:hover {
-  background: #1c2128 !important;
-  border-color: #8b949e !important;
-  color: #cdd9e5 !important;
-}
+  background:var(--sf3) !important; color:var(--t1) !important;
+  border-color:var(--bd2) !important; }
 
-/* ── Expanders ────────────────────────────────────────────────────────────── */
-[data-testid="stExpander"] {
-  border: 1px solid #1e2530 !important;
-  border-radius: 10px !important;
-  background: #111827 !important;
-  margin-bottom: 0.6rem !important;
-  overflow: hidden !important;
-}
-[data-testid="stExpander"] details summary {
-  padding: 0.8rem 1rem !important;
-  font-weight: 500 !important;
-  font-size: 0.9rem !important;
-  color: #cdd9e5 !important;
-}
-[data-testid="stExpander"] details summary:hover { background: #161b22 !important; }
-[data-testid="stExpander"] details[open] summary { border-bottom: 1px solid #1e2530 !important; }
-
-/* ── Inputs ───────────────────────────────────────────────────────────────── */
-[data-testid="stTextInput"] input,
-[data-testid="stTextArea"] textarea,
+/* ── Inputs ── */
+[data-testid="stTextInput"] input,[data-testid="stTextArea"] textarea,
 [data-testid="stNumberInput"] input {
-  background: #0d1117 !important;
-  border: 1px solid #30363d !important;
-  border-radius: 8px !important;
-  color: #e6edf3 !important;
-  font-size: 0.875rem !important;
-  transition: border-color 0.15s, box-shadow 0.15s !important;
-}
-[data-testid="stTextInput"] input:focus,
-[data-testid="stTextArea"] textarea:focus,
+  background:var(--surface) !important; border:1px solid var(--bd) !important;
+  border-radius:var(--r2) !important; color:var(--t1) !important;
+  font-size:.875rem !important;
+  transition:border-color .15s,box-shadow .15s !important; }
+[data-testid="stTextInput"] input:focus,[data-testid="stTextArea"] textarea:focus,
 [data-testid="stNumberInput"] input:focus {
-  border-color: #1a56db !important;
-  box-shadow: 0 0 0 3px rgba(26,86,219,.2) !important;
-  outline: none !important;
-}
+  border-color:var(--ac) !important;
+  box-shadow:0 0 0 3px rgba(37,99,235,.1) !important; outline:none !important; }
 
-/* ── Selectbox / Multiselect ──────────────────────────────────────────────── */
-[data-testid="stSelectbox"] > div > div,
-[data-testid="stMultiSelect"] > div > div {
-  background: #0d1117 !important;
-  border: 1px solid #30363d !important;
-  border-radius: 8px !important;
-  color: #e6edf3 !important;
-}
+/* ── Selectbox ── */
+[data-testid="stSelectbox"]>div>div,[data-testid="stMultiSelect"]>div>div {
+  background:var(--surface) !important; border:1px solid var(--bd) !important;
+  border-radius:var(--r2) !important; color:var(--t1) !important; }
 [data-testid="stMultiSelect"] span[data-baseweb="tag"] {
-  background: #1e3a5f !important;
-  border: 1px solid #1a56db !important;
-  border-radius: 4px !important;
-}
+  background:var(--ac-bg) !important; border:1px solid var(--ac) !important;
+  border-radius:4px !important; color:var(--ac) !important; }
 
-/* ── Tabs ─────────────────────────────────────────────────────────────────── */
+/* ── Tabs ── */
 [data-testid="stTabs"] [data-baseweb="tab-list"] {
-  background: transparent !important;
-  border-bottom: 1px solid #1e2530 !important;
-  gap: 4px !important;
-  padding-bottom: 0 !important;
-}
+  background:transparent !important; border-bottom:1px solid var(--bd) !important;
+  gap:4px !important; padding-bottom:0 !important; }
 [data-testid="stTabs"] [data-baseweb="tab"] {
-  background: transparent !important;
-  color: #6e7681 !important;
-  font-size: 0.85rem !important;
-  font-weight: 500 !important;
-  padding: 0.5rem 1rem !important;
-  border-radius: 6px 6px 0 0 !important;
-  border-bottom: 2px solid transparent !important;
-  transition: color 0.15s !important;
-}
-[data-testid="stTabs"] [data-baseweb="tab"]:hover { color: #cdd9e5 !important; }
+  background:transparent !important; color:var(--t3) !important;
+  font-size:.84rem !important; font-weight:500 !important;
+  padding:.5rem 1rem !important; border-radius:var(--r2) var(--r2) 0 0 !important;
+  border-bottom:2px solid transparent !important; transition:color .15s !important; }
+[data-testid="stTabs"] [data-baseweb="tab"]:hover { color:var(--t1) !important; }
 [data-testid="stTabs"] [aria-selected="true"] {
-  color: #e6edf3 !important;
-  border-bottom-color: #1a56db !important;
-  background: #111827 !important;
-}
+  color:var(--ac) !important; border-bottom-color:var(--ac) !important;
+  background:var(--ac-bg) !important; }
 
-/* ── Alerts ───────────────────────────────────────────────────────────────── */
+/* ── Expanders ── */
+[data-testid="stExpander"] {
+  border:1px solid var(--bd) !important; border-radius:var(--r) !important;
+  background:var(--surface) !important; margin-bottom:.5rem !important; overflow:hidden !important; }
+[data-testid="stExpander"] details summary {
+  padding:.75rem 1rem !important; font-weight:500 !important;
+  font-size:.875rem !important; color:var(--t1) !important; }
+[data-testid="stExpander"] details summary:hover { background:var(--sf2) !important; }
+[data-testid="stExpander"] details[open] summary { border-bottom:1px solid var(--bd) !important; }
+
+/* ── Alerts ── */
 [data-testid="stAlert"] {
-  border-radius: 8px !important;
-  font-size: 0.875rem !important;
-  border-width: 1px !important;
-  border-style: solid !important;
-}
+  border-radius:var(--r2) !important; font-size:.875rem !important;
+  border-width:1px !important; border-style:solid !important; }
 
-/* ── Dividers ─────────────────────────────────────────────────────────────── */
-hr { border-color: #1e2530 !important; margin: 1.25rem 0 !important; }
-
-/* ── Caption ──────────────────────────────────────────────────────────────── */
-[data-testid="stCaptionContainer"] p {
-  color: #6e7681 !important;
-  font-size: 0.78rem !important;
-}
-
-/* ── Dataframe ────────────────────────────────────────────────────────────── */
+/* ── Dataframe ── */
 [data-testid="stDataFrame"] {
-  border: 1px solid #1e2530 !important;
-  border-radius: 10px !important;
-  overflow: hidden !important;
-}
+  border:1px solid var(--bd) !important; border-radius:var(--r) !important; overflow:hidden !important; }
 
-/* ── Toggle ───────────────────────────────────────────────────────────────── */
-[data-testid="stToggle"] label { color: #cdd9e5 !important; font-size: 0.875rem !important; }
+/* ── Dividers ── */
+hr { border-color:var(--bd) !important; margin:1rem 0 !important; }
 
-/* ── Scrollbar ────────────────────────────────────────────────────────────── */
-::-webkit-scrollbar { width: 6px; height: 6px; }
-::-webkit-scrollbar-track { background: #0d1117; }
-::-webkit-scrollbar-thumb { background: #30363d; border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: #8b949e; }
+/* ── Caption ── */
+[data-testid="stCaptionContainer"] p { color:var(--t3) !important; font-size:.78rem !important; }
 
-/* ── Anti-ghost: fade-in no rerun para mascarar conteúdo residual ─────────── */
-[data-testid="stMain"] .block-container {
-  animation: ppgFadeIn 0.18s ease-in;
-}
-@keyframes ppgFadeIn {
-  from { opacity: 0; }
-  to   { opacity: 1; }
-}
+/* ── Toggle ── */
+[data-testid="stToggle"] label { color:var(--t2) !important; font-size:.875rem !important; }
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar { width:5px; height:5px; }
+::-webkit-scrollbar-track { background:transparent; }
+::-webkit-scrollbar-thumb { background:var(--sf3); border-radius:3px; }
+
+/* ── Fade-in anti-ghost ── */
+[data-testid="stMain"] .block-container { animation:ppgFade .18s ease-in; }
+@keyframes ppgFade { from{opacity:0} to{opacity:1} }
+
+/* ── PPG Top Bar ── */
+#ppg-topbar {
+  position:fixed; top:0; left:0; right:0; height:var(--topbar);
+  background:var(--surface); border-bottom:1px solid var(--bd);
+  display:flex; align-items:center; padding:0 16px; gap:12px;
+  z-index:999999; transition:background .2s,border-color .2s;
+  box-shadow:var(--sh); }
+#ppg-hamburger {
+  width:36px; height:36px; border:none; background:transparent;
+  border-radius:var(--r2); cursor:pointer; display:flex; flex-direction:column;
+  align-items:center; justify-content:center; gap:4px;
+  transition:background .15s; flex-shrink:0; }
+#ppg-hamburger:hover { background:var(--sf2); }
+#ppg-hamburger span { width:16px; height:2px; background:var(--t2);
+  border-radius:2px; display:block; transition:all .2s; }
+.ppg-brand { display:flex; align-items:center; gap:10px; text-decoration:none; }
+.ppg-brand-icon { width:32px; height:32px; background:linear-gradient(135deg,#2563eb,#1d4ed8);
+  border-radius:8px; display:flex; align-items:center; justify-content:center;
+  font-size:16px; flex-shrink:0; }
+.ppg-brand-name { font-size:.875rem; font-weight:700; color:var(--t1); white-space:nowrap; }
+.ppg-brand-sub { font-size:.65rem; color:var(--t3); }
+.ppg-sep { width:1px; height:24px; background:var(--bd); flex-shrink:0; }
+.ppg-search-wrap { flex:1; max-width:320px; position:relative; }
+.ppg-search-wrap input {
+  width:100%; height:34px; padding:0 12px 0 34px;
+  background:var(--sf2); border:1px solid var(--bd); border-radius:var(--r2);
+  color:var(--t1); font-size:.8rem; font-family:inherit; outline:none;
+  transition:all .15s; }
+.ppg-search-wrap input:focus {
+  border-color:var(--ac); background:var(--surface);
+  box-shadow:0 0 0 3px rgba(37,99,235,.1); }
+.ppg-search-icon { position:absolute; left:9px; top:50%;
+  transform:translateY(-50%); color:var(--t3); pointer-events:none; font-size:13px; }
+.ppg-spacer { flex:1; }
+.ppg-icon-btn {
+  width:34px; height:34px; border:none; background:transparent;
+  border-radius:var(--r2); cursor:pointer; display:flex; align-items:center;
+  justify-content:center; color:var(--t2); font-size:14px; position:relative;
+  transition:all .15s; flex-shrink:0; }
+.ppg-icon-btn:hover { background:var(--sf2); color:var(--t1); }
+.ppg-notif-dot { position:absolute; top:5px; right:5px; width:7px; height:7px;
+  background:var(--err); border-radius:50%; border:2px solid var(--surface); }
+#ppg-theme-btn {
+  width:46px; height:24px; background:var(--sf3); border:1px solid var(--bd);
+  border-radius:12px; cursor:pointer; position:relative; flex-shrink:0; transition:all .2s; }
+#ppg-theme-btn::after { content:''; position:absolute; width:16px; height:16px;
+  border-radius:50%; background:var(--surface); top:3px; left:3px;
+  transition:transform .2s; box-shadow:var(--sh); }
+html[data-ppg-theme="dark"] #ppg-theme-btn { background:var(--ac); border-color:var(--ac); }
+html[data-ppg-theme="dark"] #ppg-theme-btn::after { transform:translateX(22px); }
+.ppg-user-chip { display:flex; align-items:center; gap:8px;
+  padding:4px 10px 4px 4px; border-radius:20px; cursor:pointer;
+  border:1px solid transparent; transition:all .15s; }
+.ppg-user-chip:hover { background:var(--sf2); border-color:var(--bd); }
+.ppg-avatar { width:28px; height:28px;
+  background:linear-gradient(135deg,#2563eb,#7c3aed); border-radius:50%;
+  display:flex; align-items:center; justify-content:center;
+  font-size:11px; font-weight:700; color:#fff; flex-shrink:0; }
+.ppg-uname { font-size:.8rem; font-weight:600; color:var(--t1); line-height:1.2; }
+.ppg-urole { font-size:.65rem; font-weight:700; text-transform:uppercase; letter-spacing:.06em; }
+.ppg-role-admin  { color:#f59e0b; }
+.ppg-role-editor { color:#10b981; }
+.ppg-role-viewer { color:var(--t3); }
 </style>
+""", unsafe_allow_html=True)
+
+# Inicializa tema — lê localStorage e aplica na primeira renderização
+st.markdown("""
+<script>
+(function(){
+  try {
+    var t = localStorage.getItem('ppg_theme') || 'light';
+    document.documentElement.setAttribute('data-ppg-theme', t);
+  } catch(e){}
+})();
+</script>
 """, unsafe_allow_html=True)
 
 
@@ -506,6 +506,87 @@ def main() -> None:
     role     = st.session_state["role"]
     username = st.session_state["username"]
 
+    # ── Top bar injetado via HTML ─────────────────────────────────────────────
+    _initials = (username[:2].upper() if username else "??")
+    _role_class = {"admin": "ppg-role-admin", "editor": "ppg-role-editor"}.get(role, "ppg-role-viewer")
+    _ac = get_alert_counts(username, role)
+    _notif_dot = '<span class="ppg-notif-dot"></span>' if _ac["total"] > 0 else ""
+    st.markdown(f"""
+    <div id="ppg-topbar">
+      <button id="ppg-hamburger" onclick="ppgToggleSidebar()" aria-label="Menu">
+        <span></span><span></span><span></span>
+      </button>
+      <a class="ppg-brand" href="#">
+        <div class="ppg-brand-icon">📊</div>
+        <div>
+          <div class="ppg-brand-name">Campanhas PPG</div>
+          <div class="ppg-brand-sub">Campaign Management</div>
+        </div>
+      </a>
+      <div class="ppg-sep"></div>
+      <div class="ppg-search-wrap">
+        <span class="ppg-search-icon">🔍</span>
+        <input type="text" placeholder="Buscar campanha, cliente…" id="ppg-search-input"
+               oninput="ppgSearch(this.value)">
+      </div>
+      <div class="ppg-spacer"></div>
+      <button class="ppg-icon-btn" title="Notificações">🔔{_notif_dot}</button>
+      <button id="ppg-theme-btn" onclick="ppgToggleTheme()" title="Alternar tema" aria-label="Tema"></button>
+      <div class="ppg-sep"></div>
+      <div class="ppg-user-chip">
+        <div class="ppg-avatar">{_initials}</div>
+        <div>
+          <div class="ppg-uname">{username}</div>
+          <div class="ppg-urole {_role_class}">{role.upper()}</div>
+        </div>
+      </div>
+    </div>
+    <script>
+    (function(){{
+      try {{
+        /* Aplica tema salvo */
+        var t = localStorage.getItem('ppg_theme') || 'light';
+        document.documentElement.setAttribute('data-ppg-theme', t);
+      }} catch(e){{}}
+    }})();
+    function ppgToggleTheme() {{
+      try {{
+        var html = document.documentElement;
+        var cur  = html.getAttribute('data-ppg-theme') || 'light';
+        var next = cur === 'dark' ? 'light' : 'dark';
+        html.setAttribute('data-ppg-theme', next);
+        localStorage.setItem('ppg_theme', next);
+      }} catch(e){{}}
+    }}
+    function ppgToggleSidebar() {{
+      try {{
+        var doc  = window.parent.document;
+        var sb   = doc.querySelector('[data-testid="stSidebar"]');
+        var main = doc.querySelector('[data-testid="stMain"]');
+        if (!sb) return;
+        var collapsed = sb.style.transform === 'translateX(-100%)';
+        if (collapsed) {{
+          sb.style.transform = '';
+          sb.style.opacity   = '1';
+          if (main) main.style.marginLeft = '';
+        }} else {{
+          sb.style.transform = 'translateX(-100%)';
+          sb.style.opacity   = '0';
+          if (main) main.style.marginLeft = '0';
+        }}
+      }} catch(e) {{}}
+    }}
+    function ppgSearch(v) {{
+      /* Foca na busca nativa da sidebar ao digitar */
+      try {{
+        var doc = window.parent.document;
+        var inp = doc.querySelector('[data-testid="stSidebar"] input[type="text"]');
+        if (inp && v) {{ inp.value = v; inp.dispatchEvent(new Event('input',{{bubbles:true}})); }}
+      }} catch(e) {{}}
+    }}
+    </script>
+    """, unsafe_allow_html=True)
+
     # ── (Memória automática removida a pedido do usuário) ─────────────────────
     # ── Cruzamento automático global (roda em qualquer página) ────────────────
     if ("plan_df" in st.session_state and "assets_df" in st.session_state
@@ -529,31 +610,7 @@ def main() -> None:
 
     # ── Sidebar nav ───────────────────────────────────────────────────────────
     with st.sidebar:
-        _role_color = {"admin": "#f0883e", "editor": "#3fb950", "viewer": "#8b949e"}.get(role, "#8b949e")
-        st.markdown(f"""
-        <div style="padding:1.25rem 0.5rem 1rem;border-bottom:1px solid #1e2530;margin-bottom:0.75rem">
-          <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
-            <div style="width:36px;height:36px;background:linear-gradient(135deg,#1a56db,#1e40af);
-                        border-radius:9px;display:flex;align-items:center;justify-content:center;
-                        font-size:18px;flex-shrink:0">📊</div>
-            <div>
-              <div style="font-weight:700;font-size:0.95rem;color:#e6edf3;line-height:1.1">Campanhas PPG</div>
-              <div style="font-size:0.7rem;color:#6e7681">Campaign Management</div>
-            </div>
-          </div>
-          <div style="display:flex;align-items:center;gap:8px;background:#111827;
-                      border:1px solid #1e2530;border-radius:8px;padding:6px 10px">
-            <div style="width:26px;height:26px;background:#1e2530;border-radius:50%;
-                        display:flex;align-items:center;justify-content:center;font-size:13px">👤</div>
-            <div style="flex:1;min-width:0">
-              <div style="font-size:0.8rem;font-weight:600;color:#cdd9e5;
-                          white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{username}</div>
-              <div style="font-size:0.68rem;font-weight:600;color:{_role_color};
-                          text-transform:uppercase;letter-spacing:0.05em">{role}</div>
-            </div>
-          </div>
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown('<div style="height:8px"></div>', unsafe_allow_html=True)
 
         # Aviso de senha padrão (item 3)
         if has_default_password(username):

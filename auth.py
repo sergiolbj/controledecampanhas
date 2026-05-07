@@ -293,11 +293,16 @@ def delete_session(token: str) -> None:
 
 
 def login_ui() -> None:
-    st.markdown(
-        "<h2 style='text-align:center;padding-top:3rem'>📊 Controle de Campanhas PPG</h2>"
-        "<p style='text-align:center;color:#8b949e'>Campaign Management Platform</p>",
-        unsafe_allow_html=True,
-    )
+    st.markdown("""
+    <div style="text-align:center;padding:3rem 0 1rem">
+      <div style="width:52px;height:52px;background:linear-gradient(135deg,#2563eb,#1d4ed8);
+                  border-radius:14px;display:inline-flex;align-items:center;justify-content:center;
+                  font-size:26px;margin-bottom:1rem;box-shadow:0 4px 16px rgba(37,99,235,.3)">📊</div>
+      <h2 style="font-size:1.5rem;font-weight:700;color:var(--t1);letter-spacing:-.02em;margin:0">
+        Controle de Campanhas PPG</h2>
+      <p style="color:var(--t3);font-size:.875rem;margin:.5rem 0 0">Campaign Management Platform</p>
+    </div>
+    """, unsafe_allow_html=True)
     _, mid, _ = st.columns([1, 1.4, 1])
     with mid:
         st.divider()
