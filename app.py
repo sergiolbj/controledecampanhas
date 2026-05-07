@@ -2449,6 +2449,9 @@ def main() -> None:
                 "Upload da planilha preenchida", type=["xlsx", "xls", "csv"],
                 key="batch_upload"
             )
+
+            # Parse imediato ao receber o arquivo — salva no session_state para
+            # sobreviver aos reruns causados pela interação com os multiselects
             if _batch_file:
                 try:
                     if _batch_file.name.lower().endswith(".csv"):
@@ -2457,14 +2460,11 @@ def main() -> None:
                         _batch_df = pd.read_excel(_batch_file)
                     _batch_df.columns = [c.strip().lower().replace(" ", "_") for c in _batch_df.columns]
 
-                    _missing_cols = [c for c in ["nome_campanha"] if c not in _batch_df.columns]
-                    if _missing_cols:
-                        st.error(f"Coluna(s) obrigatória(s) ausente(s): {', '.join(_missing_cols)}")
+                    if "nome_campanha" not in _batch_df.columns:
+                        st.error("Coluna obrigatória ausente: nome_campanha")
                     else:
                         _batch_df = _batch_df.fillna("")
-
-                        # Monta estrutura: {camp_name: {cliente, veiculos: [...]}}
-                        _batch_parsed: dict[str, dict] = {}
+                        _parsed: dict[str, dict] = {}
                         for _, _br in _batch_df.iterrows():
                             _cn = str(_br.get("nome_campanha", "")).strip()
                             _cl = str(_br.get("cliente", "")).strip()
@@ -2472,71 +2472,75 @@ def main() -> None:
                             _vs = [v.strip() for v in _vv.split(",") if v.strip()] if _vv else []
                             if not _cn:
                                 continue
-                            if _cn not in _batch_parsed:
-                                _batch_parsed[_cn] = {"cliente": _cl, "veiculos": []}
-                            _batch_parsed[_cn]["veiculos"].extend(
-                                [v for v in _vs if v not in _batch_parsed[_cn]["veiculos"]]
+                            if _cn not in _parsed:
+                                _parsed[_cn] = {"cliente": _cl, "veiculos": []}
+                            _parsed[_cn]["veiculos"].extend(
+                                [v for v in _vs if v not in _parsed[_cn]["veiculos"]]
                             )
-
-                        if not _batch_parsed:
-                            st.warning("Nenhuma linha válida encontrada na planilha.")
-                        else:
-                            st.markdown(f"**{len(_batch_parsed)} campanha(s) encontrada(s)** — selecione os veículos a criar:")
-                            st.caption("Todos os veículos vêm pré-selecionados. Desmarque os que não quer criar.")
-
-                            # Seleção de veículos por campanha
-                            _batch_selection: dict[str, list[str]] = {}
-                            for _cn, _cd in _batch_parsed.items():
-                                _cl = _cd["cliente"]
-                                _vs_all = _cd["veiculos"]
-                                st.markdown(f"**{_cn}** · `{_cl or '—'}`")
-                                if _vs_all:
-                                    _sel_vehs = st.multiselect(
-                                        "Veículos",
-                                        options=_vs_all,
-                                        default=_vs_all,
-                                        key=f"batch_vsel_{_cn}",
-                                        label_visibility="collapsed",
-                                    )
-                                else:
-                                    st.caption("Sem veículos na planilha (apenas a campanha será criada).")
-                                    _sel_vehs = []
-                                _batch_selection[_cn] = _sel_vehs
-
-                            st.divider()
-                            _total_vehs_sel = sum(len(v) for v in _batch_selection.values())
-                            st.caption(f"Total selecionado: **{len(_batch_selection)} campanha(s)** · **{_total_vehs_sel} veículo(s)**")
-
-                            if st.button("✅ Criar seleção", type="primary", key="batch_create"):
-                                _existing_names = {c["name"].lower(): c["id"] for c in get_campaigns(role="admin", include_archived=True)}
-                                _created, _skipped, _vehs_created, _errors_b = 0, 0, 0, []
-                                for _cn, _sel_vehs in _batch_selection.items():
-                                    _cl = _batch_parsed[_cn]["cliente"]
-                                    try:
-                                        if _cn.lower() in _existing_names:
-                                            _cid_b = _existing_names[_cn.lower()]
-                                            _skipped += 1
-                                        else:
-                                            _cid_b = create_campaign(_cn, _cl)
-                                            _created += 1
-                                        for _vn in _sel_vehs:
-                                            try:
-                                                create_vehicle(_cid_b, _vn)
-                                                _vehs_created += 1
-                                            except Exception:
-                                                pass
-                                    except Exception as _be:
-                                        _errors_b.append(f"{_cn}: {_be}")
-                                st.success(
-                                    f"✅ {_created} campanha(s) criada(s), {_skipped} já existia(m). "
-                                    f"{_vehs_created} veículo(s) adicionado(s)."
-                                )
-                                if _errors_b:
-                                    for _eb in _errors_b:
-                                        st.error(_eb)
-                                st.rerun()
+                        st.session_state["_batch_parsed"] = _parsed
                 except Exception as _batch_err:
                     st.error(f"Erro ao ler planilha: {_batch_err}")
+                    st.session_state.pop("_batch_parsed", None)
+            elif not _batch_file:
+                st.session_state.pop("_batch_parsed", None)
+
+            # Renderiza seleção a partir do session_state (persiste entre reruns)
+            _batch_parsed = st.session_state.get("_batch_parsed", {})
+            if _batch_parsed:
+                st.markdown(f"**{len(_batch_parsed)} campanha(s) encontrada(s)** — selecione os veículos a criar:")
+                st.caption("Todos os veículos vêm pré-selecionados. Desmarque os que não quer criar.")
+
+                _batch_selection: dict[str, list[str]] = {}
+                for _cn, _cd in _batch_parsed.items():
+                    _cl = _cd["cliente"]
+                    _vs_all = _cd["veiculos"]
+                    st.markdown(f"**{_cn}** · `{_cl or '—'}`")
+                    if _vs_all:
+                        _sel_vehs = st.multiselect(
+                            "Veículos",
+                            options=_vs_all,
+                            default=_vs_all,
+                            key=f"batch_vsel_{_cn}",
+                            label_visibility="collapsed",
+                        )
+                    else:
+                        st.caption("Sem veículos na planilha (apenas a campanha será criada).")
+                        _sel_vehs = []
+                    _batch_selection[_cn] = _sel_vehs
+
+                st.divider()
+                _total_vehs_sel = sum(len(v) for v in _batch_selection.values())
+                st.caption(f"Total selecionado: **{len(_batch_selection)} campanha(s)** · **{_total_vehs_sel} veículo(s)**")
+
+                if st.button("✅ Criar seleção", type="primary", key="batch_create"):
+                    _existing_names = {c["name"].lower(): c["id"] for c in get_campaigns(role="admin", include_archived=True)}
+                    _created, _skipped, _vehs_created, _errors_b = 0, 0, 0, []
+                    for _cn, _sel_vehs in _batch_selection.items():
+                        _cl = _batch_parsed[_cn]["cliente"]
+                        try:
+                            if _cn.lower() in _existing_names:
+                                _cid_b = _existing_names[_cn.lower()]
+                                _skipped += 1
+                            else:
+                                _cid_b = create_campaign(_cn, _cl)
+                                _created += 1
+                            for _vn in _sel_vehs:
+                                try:
+                                    create_vehicle(_cid_b, _vn)
+                                    _vehs_created += 1
+                                except Exception:
+                                    pass
+                        except Exception as _be:
+                            _errors_b.append(f"{_cn}: {_be}")
+                    st.success(
+                        f"✅ {_created} campanha(s) criada(s), {_skipped} já existia(m). "
+                        f"{_vehs_created} veículo(s) adicionado(s)."
+                    )
+                    if _errors_b:
+                        for _eb in _errors_b:
+                            st.error(_eb)
+                    st.session_state.pop("_batch_parsed", None)
+                    st.rerun()
 
         # ── Item 19: cobertura de mapeamento ──────────────────────────────────
         _cov_data = get_mapping_coverage()
