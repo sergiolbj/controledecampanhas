@@ -1,5 +1,6 @@
 import json
 
+import pandas as pd
 import streamlit as st
 
 from auth import (
@@ -222,8 +223,8 @@ def render(username: str, role: str) -> None:
                         st.rerun()
 
         # ── Cruzamento automático ─────────────────────────────────────────
-        plan_loaded   = "plan_df" in st.session_state
-        assets_loaded = "assets_df" in st.session_state
+        plan_loaded   = isinstance(st.session_state.get("plan_df"),   pd.DataFrame)
+        assets_loaded = isinstance(st.session_state.get("assets_df"), pd.DataFrame)
 
         if plan_loaded and assets_loaded:
             st.divider()
