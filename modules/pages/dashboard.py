@@ -265,28 +265,27 @@ def render(username: str, role: str) -> None:
             base["sys_client"] = ""
 
     # ── Filters ───────────────────────────────────────────────────────────
-    with st.expander("🔽 Filtros", expanded=True):
-        f1, f2, f3, f4, f5 = st.columns(5)
+    f1, f2, f3, f4, f5 = st.columns(5)
 
-        def _opts(col: str) -> list[str]:
-            if col in base.columns:
-                return ["(Todos)"] + sorted(
-                    base[col].dropna().astype(str).unique().tolist()
-                )
-            return ["(Todos)"]
+    def _opts(col: str) -> list[str]:
+        if col in base.columns:
+            return ["(Todos)"] + sorted(
+                base[col].dropna().astype(str).unique().tolist()
+            )
+        return ["(Todos)"]
 
-        _veh_col = "sys_vehicle" if "sys_vehicle" in base.columns else "vehicle"
-        sel_client     = f1.selectbox("Cliente", _opts("sys_client"), key="f_cli")
-        sel_sys_camp   = f2.selectbox("Campanha (Sistema)", _opts("sys_campaign"), key="f_scamp")
-        sel_asset_camp = f3.selectbox("Campanha (Assets)", _opts("campaign_name_asset"), key="f_acamp")
-        sel_vehicle    = f4.selectbox("Veículo",  _opts(_veh_col),        key="f_veh")
-        sel_vstatus    = f5.selectbox("Status",   _opts("veiculacao_status"), key="f_sts")
+    _veh_col = "sys_vehicle" if "sys_vehicle" in base.columns else "vehicle"
+    sel_client     = f1.selectbox("Cliente", _opts("sys_client"), key="f_cli")
+    sel_sys_camp   = f2.selectbox("Campanha (Sistema)", _opts("sys_campaign"), key="f_scamp")
+    sel_asset_camp = f3.selectbox("Campanha (Assets)", _opts("campaign_name_asset"), key="f_acamp")
+    sel_vehicle    = f4.selectbox("Veículo",  _opts(_veh_col),        key="f_veh")
+    sel_vstatus    = f5.selectbox("Status",   _opts("veiculacao_status"), key="f_sts")
 
-        sel_search_dash = st.text_input(
-            "🔍 Buscar anúncio / grupo / campanha",
-            placeholder="Digite para filtrar por texto…",
-            key="f_search_dash",
-        )
+    sel_search_dash = st.text_input(
+        "🔍 Buscar anúncio / grupo / campanha",
+        placeholder="Digite para filtrar por texto…",
+        key="f_search_dash",
+    )
 
     filtered = base.copy()
     for col, sel in [
@@ -343,52 +342,6 @@ def render(username: str, role: str) -> None:
                 icon="⏰",
             )
 
-    # ── Item 20: comparação de períodos ──────────────────────────────────
-    _date_col = next((c for c in ["start_date", "end_date"] if c in filtered.columns), None)
-    if _date_col and not filtered.empty:
-        with st.expander("📅 Comparar Períodos", expanded=False):
-            _today_dt = pd.Timestamp.now().date()
-            _cp1, _cp2 = st.columns(2)
-            _pa_s = _cp1.date_input("Período A — início", value=_today_dt - pd.Timedelta(days=60), key="cmp_a_s")
-            _pa_e = _cp1.date_input("Período A — fim",    value=_today_dt - pd.Timedelta(days=31), key="cmp_a_e")
-            _pb_s = _cp2.date_input("Período B — início", value=_today_dt - pd.Timedelta(days=30), key="cmp_b_s")
-            _pb_e = _cp2.date_input("Período B — fim",    value=_today_dt,                         key="cmp_b_e")
-
-            _num_cols = [c for c in ["impressions","clicks","views","spend"] if c in filtered.columns]
-
-            if _num_cols and st.button("🔀 Comparar", type="primary", key="cmp_run"):
-                def _period_filter(df, start, end, col):
-                    _s = pd.to_datetime(df[col], errors="coerce")
-                    return df[(_s.dt.date >= start) & (_s.dt.date <= end)]
-
-                _fa = _period_filter(filtered, _pa_s, _pa_e, _date_col)
-                _fb = _period_filter(filtered, _pb_s, _pb_e, _date_col)
-
-                def _to_num_col(df, col):
-                    return pd.to_numeric(
-                        df[col].astype(str).str.replace(r"[^\d.,]","",regex=True)
-                               .str.replace(".","",regex=False).str.replace(",",".",regex=False),
-                        errors="coerce"
-                    ).fillna(0)
-
-                _rows = []
-                for _nc in _num_cols:
-                    _va = _to_num_col(_fa, _nc).sum() if not _fa.empty else 0
-                    _vb = _to_num_col(_fb, _nc).sum() if not _fb.empty else 0
-                    _delta = _vb - _va
-                    _pct   = (_delta / _va * 100) if _va else None
-                    _rows.append({
-                        "Métrica":          FIELD_LABELS.get(_nc, _nc),
-                        f"A ({_pa_s}→{_pa_e})": f"{_va:,.0f}",
-                        f"B ({_pb_s}→{_pb_e})": f"{_vb:,.0f}",
-                        "Variação":         f"{_delta:+,.0f}",
-                        "Variação %":       f"{_pct:+.1f}%" if _pct is not None else "—",
-                    })
-                _rows_df = pd.DataFrame(_rows)
-                st.dataframe(_rows_df, use_container_width=True, hide_index=True)
-                st.caption(f"Período A: **{len(_fa):,}** linhas · Período B: **{len(_fb):,}** linhas")
-                _export_buttons(_rows_df, "comparacao_periodos", "exp_periods")
-
     if filtered.empty:
         st.warning("Nenhum dado disponível para exibir no Dashboard. Se você acabou de criar a campanha, acesse 'Mapeamento & Cruzamento' para ingerir os dados.")
     else:
@@ -432,7 +385,7 @@ def render(username: str, role: str) -> None:
                         title="Distribuição por Status",
                         color_discrete_sequence=px.colors.qualitative.Dark24,
                     )
-                    fig.update_layout(**_BG)
+                    fig.update_layout(**_BG, height=280, margin=dict(t=40, b=10, l=10, r=10))
                     st.plotly_chart(fig, use_container_width=True)
 
             if has_vehicle:
@@ -445,7 +398,8 @@ def render(username: str, role: str) -> None:
                         color_discrete_sequence=px.colors.qualitative.Dark24,
                     )
                     fig.update_layout(
-                        **_BG, showlegend=False,
+                        **_BG, showlegend=False, height=280,
+                        margin=dict(t=40, b=10, l=10, r=10),
                         xaxis=dict(gridcolor=_grid_col),
                         yaxis=dict(gridcolor=_grid_col),
                     )
@@ -574,3 +528,50 @@ def render(username: str, role: str) -> None:
 
     st.dataframe(tbl, use_container_width=True, hide_index=True, height=420)
     _export_buttons(tbl, "criativos", "exp_dash_tbl")
+
+    # ── Item 20: comparação de períodos ──────────────────────────────────
+    _date_col = next((c for c in ["start_date", "end_date"] if c in filtered.columns), None)
+    if _date_col and not filtered.empty:
+        st.divider()
+        with st.expander("📅 Comparar Períodos", expanded=False):
+            _today_dt = pd.Timestamp.now().date()
+            _cp1, _cp2 = st.columns(2)
+            _pa_s = _cp1.date_input("Período A — início", value=_today_dt - pd.Timedelta(days=60), key="cmp_a_s")
+            _pa_e = _cp1.date_input("Período A — fim",    value=_today_dt - pd.Timedelta(days=31), key="cmp_a_e")
+            _pb_s = _cp2.date_input("Período B — início", value=_today_dt - pd.Timedelta(days=30), key="cmp_b_s")
+            _pb_e = _cp2.date_input("Período B — fim",    value=_today_dt,                         key="cmp_b_e")
+
+            _num_cols = [c for c in ["impressions","clicks","views","spend"] if c in filtered.columns]
+
+            if _num_cols and st.button("🔀 Comparar", type="primary", key="cmp_run"):
+                def _period_filter(df, start, end, col):
+                    _s = pd.to_datetime(df[col], errors="coerce")
+                    return df[(_s.dt.date >= start) & (_s.dt.date <= end)]
+
+                _fa = _period_filter(filtered, _pa_s, _pa_e, _date_col)
+                _fb = _period_filter(filtered, _pb_s, _pb_e, _date_col)
+
+                def _to_num_col(df, col):
+                    return pd.to_numeric(
+                        df[col].astype(str).str.replace(r"[^\d.,]","",regex=True)
+                               .str.replace(".","",regex=False).str.replace(",",".",regex=False),
+                        errors="coerce"
+                    ).fillna(0)
+
+                _rows = []
+                for _nc in _num_cols:
+                    _va = _to_num_col(_fa, _nc).sum() if not _fa.empty else 0
+                    _vb = _to_num_col(_fb, _nc).sum() if not _fb.empty else 0
+                    _delta = _vb - _va
+                    _pct   = (_delta / _va * 100) if _va else None
+                    _rows.append({
+                        "Métrica":          FIELD_LABELS.get(_nc, _nc),
+                        f"A ({_pa_s}→{_pa_e})": f"{_va:,.0f}",
+                        f"B ({_pb_s}→{_pb_e})": f"{_vb:,.0f}",
+                        "Variação":         f"{_delta:+,.0f}",
+                        "Variação %":       f"{_pct:+.1f}%" if _pct is not None else "—",
+                    })
+                _rows_df = pd.DataFrame(_rows)
+                st.dataframe(_rows_df, use_container_width=True, hide_index=True)
+                st.caption(f"Período A: **{len(_fa):,}** linhas · Período B: **{len(_fb):,}** linhas")
+                _export_buttons(_rows_df, "comparacao_periodos", "exp_periods")
