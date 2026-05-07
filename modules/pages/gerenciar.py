@@ -33,6 +33,17 @@ def render(username: str, role: str) -> None:
         st.warning("🔒 Acesso negado.")
         return
 
+    # ── Resultado da criação em lote (persiste via session_state após rerun) ─
+    if "_batch_result" in st.session_state:
+        _br = st.session_state.pop("_batch_result")
+        _msg = (
+            f"✅ Lote concluído — **{_br['created']}** campanha(s) criada(s), "
+            f"**{_br['skipped']}** já existia(m), **{_br['vehs']}** veículo(s) adicionado(s)."
+        )
+        st.success(_msg)
+        for _be in _br.get("errors", []):
+            st.error(_be)
+
     # ── Veículos pendentes de mapeamento ──────────────────────────────────
     _pending_vehs = get_pending_vehicles()
     if _pending_vehs:
@@ -185,7 +196,13 @@ def render(username: str, role: str) -> None:
             if st.button("✅ Criar seleção", type="primary", key="batch_create"):
                 _existing_names = {c["name"].lower(): c["id"] for c in get_campaigns(role="admin", include_archived=True)}
                 _created, _skipped, _vehs_created, _errors_b = 0, 0, 0, []
-                for _cn, _sel_vehs in _batch_selection.items():
+                _total_b = len(_batch_selection)
+                _prog = st.progress(0, text="Iniciando…")
+                for _i, (_cn, _sel_vehs) in enumerate(_batch_selection.items()):
+                    _prog.progress(
+                        _i / _total_b,
+                        text=f"Criando **{_cn}**… ({_i + 1}/{_total_b})",
+                    )
                     _cl = _batch_parsed[_cn]["cliente"]
                     try:
                         if _cn.lower() in _existing_names:
@@ -202,14 +219,13 @@ def render(username: str, role: str) -> None:
                                 pass
                     except Exception as _be:
                         _errors_b.append(f"{_cn}: {_be}")
-                st.toast(
-                    f"✅ {_created} campanha(s) criada(s), {_skipped} já existia(m). "
-                    f"{_vehs_created} veículo(s) adicionado(s).",
-                    icon="✅",
-                )
-                if _errors_b:
-                    for _eb in _errors_b:
-                        st.error(_eb)
+                _prog.progress(1.0, text="Concluído!")
+                st.session_state["_batch_result"] = {
+                    "created": _created,
+                    "skipped": _skipped,
+                    "vehs":    _vehs_created,
+                    "errors":  _errors_b,
+                }
                 st.session_state.pop("_batch_parsed", None)
                 st.rerun()
 
