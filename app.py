@@ -63,11 +63,262 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-[data-testid="stAppViewContainer"] { background: #0d1117; }
-[data-testid="stSidebar"]          { background: #161b22; border-right: 1px solid #30363d; }
-.block-container                   { padding-top: 1.5rem; }
+/* ── Google Fonts ─────────────────────────────────────────────────────────── */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+/* ── Reset / Base ─────────────────────────────────────────────────────────── */
+*, *::before, *::after { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important; }
+
+/* Esconde chrome do Streamlit */
+[data-testid="stHeader"]     { display: none !important; }
+[data-testid="stDecoration"] { display: none !important; }
+footer                        { display: none !important; }
+
+/* ── Layout ───────────────────────────────────────────────────────────────── */
+[data-testid="stAppViewContainer"] { background: #0a0e17; }
+.block-container { padding: 2rem 2.5rem 4rem !important; max-width: 1400px; }
+
+/* ── Sidebar ──────────────────────────────────────────────────────────────── */
+[data-testid="stSidebar"] {
+  background: #0d1117 !important;
+  border-right: 1px solid #1e2530 !important;
+}
+[data-testid="stSidebar"] > div:first-child { padding: 0 !important; }
+[data-testid="stSidebarContent"] { padding: 0 1rem 1.5rem !important; }
+
+/* Nav buttons na sidebar */
+[data-testid="stSidebar"] [data-testid="stButton"] button {
+  border-radius: 8px !important;
+  font-size: 0.85rem !important;
+  font-weight: 500 !important;
+  padding: 0.5rem 0.75rem !important;
+  transition: all 0.15s ease !important;
+  width: 100% !important;
+  text-align: left !important;
+  border: none !important;
+  margin-bottom: 2px !important;
+}
+[data-testid="stSidebar"] [data-testid="stButton"] button[kind="secondary"] {
+  background: transparent !important;
+  color: #8b949e !important;
+}
+[data-testid="stSidebar"] [data-testid="stButton"] button[kind="secondary"]:hover {
+  background: #161b22 !important;
+  color: #e6edf3 !important;
+}
+[data-testid="stSidebar"] [data-testid="stButton"] button[kind="primary"] {
+  background: linear-gradient(135deg, #1a56db 0%, #1e40af 100%) !important;
+  color: #ffffff !important;
+  box-shadow: 0 1px 4px rgba(26,86,219,.4) !important;
+}
+
+/* ── Tipografia ───────────────────────────────────────────────────────────── */
+h1 {
+  font-size: 1.7rem !important;
+  font-weight: 700 !important;
+  color: #e6edf3 !important;
+  letter-spacing: -0.03em !important;
+  line-height: 1.2 !important;
+  margin-bottom: 0.25rem !important;
+}
+h2 { font-size: 1.2rem !important; font-weight: 600 !important; color: #cdd9e5 !important; }
+h3 { font-size: 1rem !important;   font-weight: 600 !important; color: #cdd9e5 !important; }
+p, li { color: #cdd9e5 !important; line-height: 1.6 !important; }
+
+/* ── Metrics ──────────────────────────────────────────────────────────────── */
+[data-testid="stMetric"] {
+  background: #111827 !important;
+  border: 1px solid #1e2530 !important;
+  border-radius: 12px !important;
+  padding: 1.1rem 1.25rem !important;
+  transition: border-color 0.15s !important;
+}
+[data-testid="stMetric"]:hover { border-color: #30363d !important; }
+[data-testid="stMetricLabel"] > div {
+  color: #6e7681 !important;
+  font-size: 0.72rem !important;
+  font-weight: 600 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.07em !important;
+}
+[data-testid="stMetricValue"] > div {
+  color: #e6edf3 !important;
+  font-size: 2rem !important;
+  font-weight: 700 !important;
+  letter-spacing: -0.03em !important;
+}
+
+/* ── Botões ───────────────────────────────────────────────────────────────── */
+[data-testid="stButton"] button {
+  border-radius: 8px !important;
+  font-size: 0.85rem !important;
+  font-weight: 500 !important;
+  padding: 0.45rem 1rem !important;
+  transition: all 0.15s ease !important;
+  border: 1px solid transparent !important;
+  letter-spacing: 0.01em !important;
+}
+[data-testid="stButton"] button[kind="primary"] {
+  background: linear-gradient(135deg, #1a56db 0%, #1e40af 100%) !important;
+  color: #fff !important;
+  border-color: #1a56db !important;
+  box-shadow: 0 1px 4px rgba(26,86,219,.35) !important;
+}
+[data-testid="stButton"] button[kind="primary"]:hover {
+  background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%) !important;
+  box-shadow: 0 2px 8px rgba(26,86,219,.5) !important;
+  transform: translateY(-1px) !important;
+}
+[data-testid="stButton"] button[kind="secondary"] {
+  background: #161b22 !important;
+  color: #cdd9e5 !important;
+  border-color: #30363d !important;
+}
+[data-testid="stButton"] button[kind="secondary"]:hover {
+  background: #1c2128 !important;
+  border-color: #8b949e !important;
+  color: #e6edf3 !important;
+}
+
+/* Download buttons */
+[data-testid="stDownloadButton"] button {
+  background: #161b22 !important;
+  border: 1px solid #30363d !important;
+  color: #8b949e !important;
+  border-radius: 8px !important;
+  font-size: 0.8rem !important;
+}
+[data-testid="stDownloadButton"] button:hover {
+  background: #1c2128 !important;
+  border-color: #8b949e !important;
+  color: #cdd9e5 !important;
+}
+
+/* ── Expanders ────────────────────────────────────────────────────────────── */
+[data-testid="stExpander"] {
+  border: 1px solid #1e2530 !important;
+  border-radius: 10px !important;
+  background: #111827 !important;
+  margin-bottom: 0.6rem !important;
+  overflow: hidden !important;
+}
+[data-testid="stExpander"] details summary {
+  padding: 0.8rem 1rem !important;
+  font-weight: 500 !important;
+  font-size: 0.9rem !important;
+  color: #cdd9e5 !important;
+}
+[data-testid="stExpander"] details summary:hover { background: #161b22 !important; }
+[data-testid="stExpander"] details[open] summary { border-bottom: 1px solid #1e2530 !important; }
+
+/* ── Inputs ───────────────────────────────────────────────────────────────── */
+[data-testid="stTextInput"] input,
+[data-testid="stTextArea"] textarea,
+[data-testid="stNumberInput"] input {
+  background: #0d1117 !important;
+  border: 1px solid #30363d !important;
+  border-radius: 8px !important;
+  color: #e6edf3 !important;
+  font-size: 0.875rem !important;
+  transition: border-color 0.15s, box-shadow 0.15s !important;
+}
+[data-testid="stTextInput"] input:focus,
+[data-testid="stTextArea"] textarea:focus,
+[data-testid="stNumberInput"] input:focus {
+  border-color: #1a56db !important;
+  box-shadow: 0 0 0 3px rgba(26,86,219,.2) !important;
+  outline: none !important;
+}
+
+/* ── Selectbox / Multiselect ──────────────────────────────────────────────── */
+[data-testid="stSelectbox"] > div > div,
+[data-testid="stMultiSelect"] > div > div {
+  background: #0d1117 !important;
+  border: 1px solid #30363d !important;
+  border-radius: 8px !important;
+  color: #e6edf3 !important;
+}
+[data-testid="stMultiSelect"] span[data-baseweb="tag"] {
+  background: #1e3a5f !important;
+  border: 1px solid #1a56db !important;
+  border-radius: 4px !important;
+}
+
+/* ── Tabs ─────────────────────────────────────────────────────────────────── */
+[data-testid="stTabs"] [data-baseweb="tab-list"] {
+  background: transparent !important;
+  border-bottom: 1px solid #1e2530 !important;
+  gap: 4px !important;
+  padding-bottom: 0 !important;
+}
+[data-testid="stTabs"] [data-baseweb="tab"] {
+  background: transparent !important;
+  color: #6e7681 !important;
+  font-size: 0.85rem !important;
+  font-weight: 500 !important;
+  padding: 0.5rem 1rem !important;
+  border-radius: 6px 6px 0 0 !important;
+  border-bottom: 2px solid transparent !important;
+  transition: color 0.15s !important;
+}
+[data-testid="stTabs"] [data-baseweb="tab"]:hover { color: #cdd9e5 !important; }
+[data-testid="stTabs"] [aria-selected="true"] {
+  color: #e6edf3 !important;
+  border-bottom-color: #1a56db !important;
+  background: #111827 !important;
+}
+
+/* ── Alerts ───────────────────────────────────────────────────────────────── */
+[data-testid="stAlert"] {
+  border-radius: 8px !important;
+  font-size: 0.875rem !important;
+  border-width: 1px !important;
+  border-style: solid !important;
+}
+
+/* ── Dividers ─────────────────────────────────────────────────────────────── */
+hr { border-color: #1e2530 !important; margin: 1.25rem 0 !important; }
+
+/* ── Caption ──────────────────────────────────────────────────────────────── */
+[data-testid="stCaptionContainer"] p {
+  color: #6e7681 !important;
+  font-size: 0.78rem !important;
+}
+
+/* ── Dataframe ────────────────────────────────────────────────────────────── */
+[data-testid="stDataFrame"] {
+  border: 1px solid #1e2530 !important;
+  border-radius: 10px !important;
+  overflow: hidden !important;
+}
+
+/* ── Toggle ───────────────────────────────────────────────────────────────── */
+[data-testid="stToggle"] label { color: #cdd9e5 !important; font-size: 0.875rem !important; }
+
+/* ── Scrollbar ────────────────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: #0d1117; }
+::-webkit-scrollbar-thumb { background: #30363d; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #8b949e; }
 </style>
 """, unsafe_allow_html=True)
+
+
+# ── Page header helper ────────────────────────────────────────────────────────
+def _page_header(icon: str, title: str, subtitle: str = "") -> None:
+    sub_html = f'<p style="margin:0;font-size:0.875rem;color:#6e7681">{subtitle}</p>' if subtitle else ""
+    st.markdown(f"""
+    <div style="display:flex;align-items:center;gap:14px;margin-bottom:1.75rem;
+                padding-bottom:1.25rem;border-bottom:1px solid #1e2530">
+      <div style="width:46px;height:46px;background:linear-gradient(135deg,#1a56db,#1e40af);
+                  border-radius:12px;display:flex;align-items:center;justify-content:center;
+                  font-size:22px;flex-shrink:0;box-shadow:0 2px 8px rgba(26,86,219,.35)">{icon}</div>
+      <div>
+        <h1 style="margin:0;font-size:1.5rem;font-weight:700;color:#e6edf3;letter-spacing:-0.02em">{title}</h1>
+        {sub_html}
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
 
 
 # ── Export helper ─────────────────────────────────────────────────────────────
@@ -813,8 +1064,31 @@ def main() -> None:
 
     # ── Sidebar nav ───────────────────────────────────────────────────────────
     with st.sidebar:
-        st.markdown("## 📊 Campanhas PPG")
-        st.caption(f"👤 **{username}** · `{role.upper()}`")
+        _role_color = {"admin": "#f0883e", "editor": "#3fb950", "viewer": "#8b949e"}.get(role, "#8b949e")
+        st.markdown(f"""
+        <div style="padding:1.25rem 0.5rem 1rem;border-bottom:1px solid #1e2530;margin-bottom:0.75rem">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+            <div style="width:36px;height:36px;background:linear-gradient(135deg,#1a56db,#1e40af);
+                        border-radius:9px;display:flex;align-items:center;justify-content:center;
+                        font-size:18px;flex-shrink:0">📊</div>
+            <div>
+              <div style="font-weight:700;font-size:0.95rem;color:#e6edf3;line-height:1.1">Campanhas PPG</div>
+              <div style="font-size:0.7rem;color:#6e7681">Campaign Management</div>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;background:#111827;
+                      border:1px solid #1e2530;border-radius:8px;padding:6px 10px">
+            <div style="width:26px;height:26px;background:#1e2530;border-radius:50%;
+                        display:flex;align-items:center;justify-content:center;font-size:13px">👤</div>
+            <div style="flex:1;min-width:0">
+              <div style="font-size:0.8rem;font-weight:600;color:#cdd9e5;
+                          white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{username}</div>
+              <div style="font-size:0.68rem;font-weight:600;color:{_role_color};
+                          text-transform:uppercase;letter-spacing:0.05em">{role}</div>
+            </div>
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
 
         # Aviso de senha padrão (item 3)
         if has_default_password(username):
@@ -916,7 +1190,7 @@ def main() -> None:
     #  PAGE 1 — MAPEAMENTO
     # ═══════════════════════════════════════════════════════════════════════════
     if page == "📥 Mapeamento & Cruzamento":
-        st.title("📥 Ingestão e Mapeamento de Dados")
+        _page_header("📥", "Mapeamento & Cruzamento", "Faça upload, mapeie colunas e cruze plano com assets")
 
         if role not in ["admin", "editor"]:
             st.warning("🔒 Somente administradores ou editores podem ingerir dados.")
@@ -1233,8 +1507,10 @@ def main() -> None:
     #  PAGE 2 — DASHBOARD
     # ═══════════════════════════════════════════════════════════════════════════
     elif page == "📊 Dashboard":
-        d1, d2 = st.columns([3, 1])
-        d1.title("📊 Dashboard & Timeline de Veiculação")
+        _dh1, _dh2 = st.columns([3, 1])
+        with _dh1:
+            _page_header("📊", "Dashboard", "Visão consolidada de performance e veiculação")
+        d1, d2 = st.columns([3, 1])  # mantém compatibilidade com código abaixo
 
         all_p_configs = st.session_state.get("all_plan_configs", [])
         all_a_configs = st.session_state.get("all_assets_configs", [])
@@ -1751,7 +2027,7 @@ def main() -> None:
     #  PAGE — CAMPANHAS EM VEICULAÇÃO
     # ═══════════════════════════════════════════════════════════════════════════
     elif page == "📡 Campanhas em Veiculação":
-        st.title("📡 Controle de Campanhas em Veiculação")
+        _page_header("📡", "Campanhas em Veiculação", "Acompanhe status, datas e cobertura das campanhas ativas")
 
         # Página acessível a todos os perfis (config da planilha somente admin)
 
@@ -2357,7 +2633,7 @@ def main() -> None:
     #  PAGE — GERENCIAR CAMPANHAS (admin/editor)
     # ═══════════════════════════════════════════════════════════════════════════
     elif page == "⚙️ Gerenciar Campanhas":
-        st.title("⚙️ Gerenciar Campanhas e Veículos")
+        _page_header("⚙️", "Gerenciar Campanhas", "Campanhas, veículos, mapeamentos e alertas")
 
         if role not in ["admin", "editor"]:
             st.warning("🔒 Acesso negado.")
@@ -2797,7 +3073,7 @@ def main() -> None:
     # ═══════════════════════════════════════════════════════════════════════════
     elif page == "📄 Relatório":
         import streamlit.components.v1 as _stc
-        st.title("📄 Relatório de Campanhas")
+        _page_header("📄", "Relatório de Campanhas", "Gere e exporte o relatório consolidado")
 
         if st.button("🔄 Gerar relatório agora", type="primary", key="rpt_generate"):
             st.session_state.pop("_rpt_html", None)
@@ -2833,7 +3109,7 @@ def main() -> None:
     #  PAGE 3 — CLIENTES (admin only)
     # ═══════════════════════════════════════════════════════════════════════════
     elif page == "🏢 Clientes":
-        st.title("🏢 Gerenciamento de Clientes")
+        _page_header("🏢", "Clientes", "Gerencie os clientes e suas campanhas")
 
         if role not in ["admin", "editor"]:
             st.warning("🔒 Acesso negado.")
@@ -2905,7 +3181,7 @@ def main() -> None:
     #  PAGE 4 — USUÁRIOS  (admin only)
     # ═══════════════════════════════════════════════════════════════════════════
     elif page == "👥 Usuários":
-        st.title("👥 Gerenciamento de Usuários")
+        _page_header("👥", "Usuários", "Gerencie acessos, perfis e destinatários de relatório")
 
         if role not in ["admin", "editor"]:
             st.warning("🔒 Acesso negado.")
@@ -3084,7 +3360,7 @@ def main() -> None:
     #  PAGE — AUDITORIA (admin only)
     # ═══════════════════════════════════════════════════════════════════════════
     elif page == "📋 Auditoria":
-        st.title("📋 Log de Auditoria")
+        _page_header("📋", "Auditoria", "Histórico de ações realizadas no sistema")
 
         if role != "admin":
             st.warning("🔒 Acesso negado.")
