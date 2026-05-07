@@ -39,8 +39,6 @@ def render(username: str, role: str) -> None:
     has_sheets = any((c.get("cfg") or {}).get("src") == "Link (Google Sheets / Office 365)" for c in sync_p + sync_a)
 
     if has_sheets:
-        d2.write("")
-        d2.write("")
         if d2.button("🔄 Sincronizar Sheets", use_container_width=True):
             # ── Fase 1: busca dados novos sem salvar (para diff) ──────
             sync_log = st.empty()
