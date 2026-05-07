@@ -271,6 +271,27 @@ _SECTION_COLORS = {
     "ended":    ("#f1f5f9", "#475569"),
 }
 
+_CLIENT_PALETTE = [
+    "#2563eb",  # blue
+    "#16a34a",  # green
+    "#dc2626",  # red
+    "#7c3aed",  # violet
+    "#0891b2",  # cyan
+    "#d97706",  # amber
+    "#db2777",  # pink
+    "#0f766e",  # teal
+    "#ea580c",  # orange
+    "#65a30d",  # lime
+]
+
+
+def _client_colors(df: pd.DataFrame) -> dict[str, str]:
+    """Assign a stable color to each client (sorted for determinism)."""
+    if "sys_client" not in df.columns:
+        return {}
+    clients = sorted(df["sys_client"].dropna().unique().tolist())
+    return {c: _CLIENT_PALETTE[i % len(_CLIENT_PALETTE)] for i, c in enumerate(clients)}
+
 
 def _fmt_date(val) -> str:
     try:
@@ -349,12 +370,13 @@ def _table(rows: pd.DataFrame, cols: list[tuple[str, str]], days_col: bool = Fal
 
 def _section(title: str, subtitle: str, rows: pd.DataFrame,
              cols: list[tuple[str, str]], bg: str, fg: str,
-             days_col: bool = False) -> str:
+             days_col: bool = False,
+             colors: dict[str, str] | None = None) -> str:
     count = len(rows)
     if count == 0:
         content = "<p style='color:#64748b;font-size:13px;margin:0'>Nenhum item.</p>"
     else:
-        content = _grouped_table(rows, cols, days_col, bg, fg)
+        content = _grouped_table(rows, cols, days_col, bg, fg, colors)
 
     return (
         f'<div style="margin:0 0 20px;border-radius:8px;overflow:hidden;'
@@ -384,12 +406,15 @@ PLAN_COLS = [
 
 
 def _grouped_table(rows: pd.DataFrame, cols: list[tuple[str, str]],
-                   days_col: bool, header_bg: str, header_fg: str) -> str:
+                   days_col: bool, header_bg: str, header_fg: str,
+                   colors: dict[str, str] | None = None) -> str:
     """Render rows grouped by sys_campaign, each group has a colored header band."""
     if rows.empty:
         return "<p style='color:#64748b;font-size:13px'>Nenhum item.</p>"
 
+    colors = colors or {}
     available = [(c, lbl) for c, lbl in cols if c in rows.columns]
+    ncols = len(available) + (1 if days_col else 0)
     groups = rows.groupby("sys_campaign", sort=False) if "sys_campaign" in rows.columns \
              else [("—", rows)]
 
@@ -406,26 +431,27 @@ def _grouped_table(rows: pd.DataFrame, cols: list[tuple[str, str]],
 
     for camp_name, grp in groups:
         client = grp["sys_client"].iloc[0] if "sys_client" in grp.columns else ""
+        c_color = colors.get(client, header_fg)
         count = len(grp)
 
         client_tag = (
-            f'<span style="background:{header_fg};color:#fff;'
+            f'<span style="background:{c_color};color:#fff;'
             f'border-radius:4px;padding:2px 7px;font-size:10px;'
             f'font-weight:700;letter-spacing:.4px;margin-right:8px;'
             f'text-transform:uppercase">{client}</span>'
         ) if client else ""
 
-        # Campaign group header
+        # Campaign group header — left border accent uses client color
         html += (
-            f'<tr><td colspan="{len(available) + (1 if days_col else 0)}" style="padding:0">'
+            f'<tr><td colspan="{ncols}" style="padding:0">'
             f'<div style="background:{header_bg};padding:7px 12px;'
             f'display:flex;align-items:center;justify-content:space-between;'
-            f'border-top:2px solid {header_fg}33">'
+            f'border-top:1px solid #e2e8f0;border-left:4px solid {c_color}">'
             f'<span style="font-size:12px;font-weight:700;color:{header_fg};'
             f'display:flex;align-items:center">'
             f'{client_tag}📢 {camp_name}'
             f'</span>'
-            f'<span style="background:{header_fg};color:#fff;border-radius:10px;'
+            f'<span style="background:{c_color};color:#fff;border-radius:10px;'
             f'padding:1px 8px;font-size:11px;font-weight:700">{count}</span>'
             f'</div>'
             f'</td></tr>'
@@ -433,18 +459,19 @@ def _grouped_table(rows: pd.DataFrame, cols: list[tuple[str, str]],
         # Column header (once per group)
         html += f'<tr>{header_row}</tr>'
 
-        # Data rows
+        # Data rows — first cell carries the client color left border
         for i, (_, row) in enumerate(grp.iterrows()):
             bg = "#f8fafc" if i % 2 == 0 else "#ffffff"
             cells = ""
-            for col, _ in available:
+            for j, (col, _) in enumerate(available):
                 val = row.get(col, "")
                 if col in ("start_date", "end_date"):
                     val = _fmt_date(val)
                 else:
                     val = str(val) if pd.notna(val) else "—"
+                left = f"border-left:4px solid {c_color};" if j == 0 else ""
                 cells += (
-                    f'<td style="padding:5px 10px;font-size:12px;'
+                    f'<td style="{left}padding:5px 10px;font-size:12px;'
                     f'color:#1e293b;border-bottom:1px solid #f1f5f9">{val}</td>'
                 )
             if days_col:
@@ -462,7 +489,7 @@ def _grouped_table(rows: pd.DataFrame, cols: list[tuple[str, str]],
 
         # Spacer between groups
         html += (
-            f'<tr><td colspan="{len(available) + (1 if days_col else 0)}" '
+            f'<tr><td colspan="{ncols}" '
             f'style="padding:0;height:8px;background:#f1f5f9"></td></tr>'
         )
 
@@ -539,15 +566,16 @@ def build_html(df: pd.DataFrame, no_data: list[dict] | None = None) -> str:
     )
 
     sc = _SECTION_COLORS
+    cc = _client_colors(df)
     sections = (
         _section("▶️ Em veiculação agora", "criativos ativos",
-                 active, PLAN_COLS, *sc["active"], days_col=True)
+                 active, PLAN_COLS, *sc["active"], days_col=True, colors=cc)
         + _section("⚠️ Encerrando nos próximos 7 dias", "requer atenção",
-                   ending, PLAN_COLS, *sc["ending"], days_col=True)
+                   ending, PLAN_COLS, *sc["ending"], days_col=True, colors=cc)
         + _section("📅 Iniciando nos próximos 7 dias", "novos criativos",
-                   upcoming, PLAN_COLS, *sc["upcoming"], days_col=True)
+                   upcoming, PLAN_COLS, *sc["upcoming"], days_col=True, colors=cc)
         + _section("🏁 Encerrados recentemente", "últimos 15 dias",
-                   ended, PLAN_COLS, *sc["ended"], days_col=True)
+                   ended, PLAN_COLS, *sc["ended"], days_col=True, colors=cc)
         + _no_data_section(no_data or [])
     )
 
