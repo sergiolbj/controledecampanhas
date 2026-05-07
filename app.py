@@ -69,6 +69,9 @@ st.markdown("""
 /* ── Reset / Base ─────────────────────────────────────────────────────────── */
 *, *::before, *::after { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important; }
 
+/* Base escura imediata (evita flash branco antes do JS carregar) */
+html, body { background-color: #0a0e17 !important; }
+
 /* Esconde chrome do Streamlit */
 [data-testid="stHeader"]     { display: none !important; }
 [data-testid="stDecoration"] { display: none !important; }
@@ -1015,6 +1018,93 @@ def _step_vehicle() -> None:
 # ═══════════════════════════════════════════════════════════════════════════════
 def main() -> None:
     init_db()
+
+    # ── Loading overlay + barra de progresso ──────────────────────────────────
+    import streamlit.components.v1 as _cv1_loader
+    _cv1_loader.html("""
+<script>
+(function () {
+  try {
+    var doc = window.parent.document;
+
+    /* ── Estilos ── */
+    if (!doc.getElementById('ppg-load-css')) {
+      var s = doc.createElement('style');
+      s.id = 'ppg-load-css';
+      s.textContent = [
+        /* barra de progresso no topo */
+        '#ppg-bar{position:fixed;top:0;left:0;right:0;height:3px;z-index:99999;',
+        'background:linear-gradient(90deg,#1a56db 0%,#60a5fa 50%,#1a56db 100%);',
+        'background-size:200% 100%;display:none;pointer-events:none}',
+        '#ppg-bar.on{display:block;animation:ppgBar 1.2s ease infinite}',
+        /* overlay inicial */
+        '#ppg-ov{position:fixed;inset:0;background:#0a0e17;z-index:99990;',
+        'display:flex;flex-direction:column;align-items:center;justify-content:center;',
+        'transition:opacity .35s ease;pointer-events:none}',
+        '#ppg-ov.out{opacity:0}',
+        /* spinner */
+        '#ppg-spin{width:42px;height:42px;border:3px solid #1e2530;',
+        'border-top-color:#1a56db;border-radius:50%;animation:ppgSpin .75s linear infinite}',
+        '#ppg-lbl{color:#6e7681;font-family:Inter,sans-serif;font-size:13px;',
+        'margin-top:14px;letter-spacing:.03em}',
+        '@keyframes ppgSpin{to{transform:rotate(360deg)}}',
+        '@keyframes ppgBar{0%{background-position:100% 0}100%{background-position:-100% 0}}'
+      ].join('');
+      doc.head.appendChild(s);
+    }
+
+    /* ── Barra de progresso ── */
+    var bar = doc.getElementById('ppg-bar');
+    if (!bar) {
+      bar = doc.createElement('div');
+      bar.id = 'ppg-bar';
+      doc.body.appendChild(bar);
+    }
+
+    /* ── Overlay de carregamento inicial ── */
+    var ov = doc.getElementById('ppg-ov');
+    if (!ov) {
+      ov = doc.createElement('div');
+      ov.id = 'ppg-ov';
+      ov.innerHTML = '<div id="ppg-spin"></div><div id="ppg-lbl">Carregando...</div>';
+      doc.body.appendChild(ov);
+
+      /* Esconde overlay quando o conteúdo principal aparecer */
+      var attempts = 0;
+      function waitContent() {
+        var container = doc.querySelector('[data-testid="stAppViewContainer"]');
+        if ((container && container.children.length > 1) || attempts > 60) {
+          ov.classList.add('out');
+          setTimeout(function(){ ov.style.display = 'none'; }, 380);
+        } else {
+          attempts++;
+          setTimeout(waitContent, 150);
+        }
+      }
+      setTimeout(waitContent, 300);
+    }
+
+    /* ── Detecta rerun via StatusWidget ── */
+    function checkRunning() {
+      var sw = doc.querySelector('[data-testid="stStatusWidget"]');
+      var running = sw && sw.offsetParent !== null;
+      /* fallback: detecta via atributo aria */
+      if (!running) {
+        var spinners = doc.querySelectorAll('[aria-label="Running"]');
+        running = spinners.length > 0;
+      }
+      bar.classList.toggle('on', !!running);
+    }
+    if (!window._ppgLoaderStarted) {
+      window._ppgLoaderStarted = true;
+      setInterval(checkRunning, 120);
+    }
+
+  } catch(e) { /* cross-origin: silencioso */ }
+})();
+</script>
+""", height=0)
+
     cm = _cookie_manager()
 
     # ── Restaurar sessão via cookie ───────────────────────────────────────────
