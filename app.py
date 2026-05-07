@@ -367,6 +367,112 @@ def _export_buttons(df: pd.DataFrame, base_name: str, key: str) -> None:
     )
 
 
+# ── Session state initializer ─────────────────────────────────────────────────
+def _init_session_state() -> None:
+    """Garante que todas as chaves usadas pelo app existam no session_state."""
+    defaults: dict = {
+        # Navegação
+        "_page": None,
+        # Mapeamento & cruzamento
+        "plan_df": None, "plan_mapping": {}, "plan_source": None, "plan_config": {},
+        "assets_df": None, "assets_mapping": {}, "assets_source": None, "assets_config": {},
+        "merged_df": None, "unmatched_df": None, "fuzzy_df": None, "_cross_sig": None,
+        "_plan_preview": None, "_assets_preview": None,
+        # Campanha / veículo selecionados
+        "cfg_campaign_id": None, "cfg_vehicle_id": None,
+        # Configs de todas as campanhas (multi-campanha)
+        "all_plan_configs": [], "all_assets_configs": [],
+        # Cookie manager
+        "_cm": None,
+        # Batch creation
+        "_batch_parsed": None,
+        # Misc UI
+        "_rpt_html": None,
+    }
+    for key, val in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = val
+
+
+# ── Modal dialogs (exclusões críticas) ────────────────────────────────────────
+@st.dialog("🗑 Excluir campanha")
+def _dlg_del_camp(cid: int, cname: str, n_vehs: int, _username: str) -> None:
+    st.error(
+        f"Excluir **{cname}** e todos os seus **{n_vehs} veículo(s)**?  \n"
+        "Todo o plano e assets serão perdidos. Esta ação **não pode ser desfeita**."
+    )
+    c1, c2 = st.columns(2)
+    if c1.button("Sim, excluir tudo", type="primary", key="dlg_del_camp_yes"):
+        delete_campaign(cid)
+        log_audit(_username, "excluir", "campanha", cname, f"{n_vehs} veículo(s) removidos")
+        st.toast(f"Campanha **{cname}** excluída.", icon="🗑")
+        st.rerun()
+    if c2.button("Cancelar", key="dlg_del_camp_no"):
+        st.rerun()
+
+
+@st.dialog("🧹 Limpar dados da campanha")
+def _dlg_clear_camp(cid: int, cname: str, n_vehs: int) -> None:
+    st.warning(
+        f"Isso apagará o **plano e os assets** de todos os **{n_vehs} veículo(s)** de **{cname}**.  \n"
+        "O histórico (log) será mantido. Esta ação **não pode ser desfeita**."
+    )
+    c1, c2 = st.columns(2)
+    if c1.button("Sim, limpar dados", type="primary", key="dlg_clear_camp_yes"):
+        n = clear_campaign_data(cid)
+        st.toast(f"{n} registro(s) removido(s) de **{cname}**.", icon="🧹")
+        st.rerun()
+    if c2.button("Cancelar", key="dlg_clear_camp_no"):
+        st.rerun()
+
+
+@st.dialog("🗑 Excluir veículo")
+def _dlg_del_veh(vid: int, vname: str) -> None:
+    st.warning(f"Excluir o veículo **{vname}** e todos os seus dados?")
+    c1, c2 = st.columns(2)
+    if c1.button("Sim, excluir", type="primary", key="dlg_del_veh_yes"):
+        delete_vehicle(vid)
+        st.toast(f"Veículo **{vname}** excluído.", icon="🗑")
+        st.rerun()
+    if c2.button("Cancelar", key="dlg_del_veh_no"):
+        st.rerun()
+
+
+@st.dialog("🗑 Excluir cliente")
+def _dlg_del_cli(name: str, n_camps: int) -> None:
+    st.warning(
+        f"Excluir **{name}**? Isso desvincula **{n_camps} campanha(s)**. "
+        "Esta ação **não pode ser desfeita**."
+    )
+    c1, c2 = st.columns(2)
+    if c1.button("Sim, excluir", type="primary", key="dlg_del_cli_yes"):
+        delete_client(name)
+        st.toast(f"Cliente **{name}** excluído.", icon="🗑")
+        st.rerun()
+    if c2.button("Cancelar", key="dlg_del_cli_no"):
+        st.rerun()
+
+
+@st.dialog("↩ Restaurar versão")
+def _dlg_restore(entry: dict) -> None:
+    _ts_str = entry["ts"].strftime("%d/%m/%Y %H:%M") if entry["ts"] and hasattr(entry["ts"], "strftime") else str(entry["ts"] or "")[:16]
+    _dtype_lbl = "Plano" if entry["data_type"] == "plan" else "Assets"
+    st.info(
+        f"Restaurar versão de **{_ts_str}** ({_dtype_lbl}, {entry['row_count']:,} linhas)?  \n"
+        "Os dados atuais serão substituídos por esta versão."
+    )
+    c1, c2 = st.columns(2)
+    if c1.button("Restaurar", type="primary", key="dlg_restore_yes"):
+        try:
+            restore_ingestion_from_log(entry["id"])
+            st.toast("Versão restaurada com sucesso!", icon="✅")
+            st.rerun()
+        except Exception as _exc:
+            st.error(str(_exc))
+    if c2.button("Cancelar", key="dlg_restore_no"):
+        st.rerun()
+
+
 # ── Template CRUD ─────────────────────────────────────────────────────────────
 def save_template(client: str, name: str, source_type: str, mapping: dict) -> None:
     with get_db() as conn:
@@ -562,7 +668,7 @@ def mapper_ui(
                 if sv2.button("💾 Salvar", type="primary", key=f"{prefix}_tsave"):
                     if tpl_client != "—" and tpl_name.strip():
                         save_template(tpl_client, tpl_name.strip(), src, mapping)
-                        st.success(f"✅ Template **{tpl_name}** salvo para **{tpl_client}**!")
+                        st.toast(f"Template **{tpl_name}** salvo para **{tpl_client}**!", icon="💾")
                     else:
                         st.warning("Selecione um cliente e informe o nome do template.")
 
@@ -903,11 +1009,9 @@ def _duplicate_vehicle_ui(username: str, role: str) -> None:
                         ast_cfg or {}, ast_map or {},
                     )
 
-                    st.success(
-                        f"Cópia criada com sucesso!\n\n"
-                        f"**{resolved_camp_name} › {dst_veh_name.strip()}**\n\n"
-                        f"- Plano: {plan_summary}\n"
-                        f"- Assets: {assets_summary}"
+                    st.toast(
+                        f"Cópia criada: **{resolved_camp_name} › {dst_veh_name.strip()}**",
+                        icon="✅",
                     )
 
                     if st.button(
@@ -1051,6 +1155,7 @@ def _step_vehicle() -> None:
 # ═══════════════════════════════════════════════════════════════════════════════
 def main() -> None:
     init_db()
+    _init_session_state()
 
     # ── Loading overlay + barra de progresso ──────────────────────────────────
     import streamlit.components.v1 as _cv1_loader
@@ -1232,7 +1337,7 @@ def main() -> None:
                     st.warning("A nova senha deve ter pelo menos 6 caracteres.")
                 else:
                     if change_own_password(username, _pw_cur, _pw_new):
-                        st.success("Senha alterada com sucesso!")
+                        st.toast("Senha alterada com sucesso!", icon="🔐")
                     else:
                         st.error("Senha atual incorreta.")
 
@@ -1632,6 +1737,7 @@ def main() -> None:
                             st.dataframe(
                                 fuzzy_df.style.background_gradient(subset=["Score (%)"], cmap="RdYlGn"),
                                 use_container_width=True, hide_index=True)
+                            _export_buttons(fuzzy_df, "sugestoes_fuzzy", "exp_fuzzy")
 
     # ═══════════════════════════════════════════════════════════════════════════
     #  PAGE 2 — DASHBOARD
@@ -1770,7 +1876,7 @@ def main() -> None:
 
                     for k in ["merged_df", "unmatched_df", "fuzzy_df", "_cross_sig", "_sync_preview"]:
                         st.session_state.pop(k, None)
-                    st.success("Sincronizado com sucesso!")
+                    st.toast("Sincronizado com sucesso!", icon="🔄")
                     st.rerun()
 
                 if sc2.button("❌ Cancelar", key="sync_cancel"):
@@ -1999,8 +2105,10 @@ def main() -> None:
                             "Variação":         f"{_delta:+,.0f}",
                             "Variação %":       f"{_pct:+.1f}%" if _pct is not None else "—",
                         })
-                    st.dataframe(pd.DataFrame(_rows), use_container_width=True, hide_index=True)
+                    _rows_df = pd.DataFrame(_rows)
+                    st.dataframe(_rows_df, use_container_width=True, hide_index=True)
                     st.caption(f"Período A: **{len(_fa):,}** linhas · Período B: **{len(_fb):,}** linhas")
+                    _export_buttons(_rows_df, "comparacao_periodos", "exp_periods")
 
         if filtered.empty:
             st.warning("Nenhum dado disponível para exibir no Dashboard. Se você acabou de criar a campanha, acesse 'Mapeamento & Cruzamento' para ingerir os dados.")
@@ -2109,6 +2217,7 @@ def main() -> None:
                 )
                 st.plotly_chart(_fig_bud, use_container_width=True)
                 st.dataframe(_agg, use_container_width=True, hide_index=True)
+                _export_buttons(_agg, "orcamento_gasto", "exp_budget")
 
         # ── Tabela de criativos ───────────────────────────────────────────────
         st.divider()
@@ -2297,7 +2406,7 @@ def main() -> None:
                         )
                         # Clear cached data to force reload
                         st.session_state.pop("_camp_data", None)
-                        st.success("Configuração salva! Recarregando dados...")
+                        st.toast("Configuração salva! Recarregando dados…", icon="💾")
                         st.rerun()
 
         # ── Load campaign data ────────────────────────────────────────────────
@@ -2449,7 +2558,7 @@ def main() -> None:
                                             _veh_skip += 1
                                     log_audit(username, "criar_em_lote", "campanha", _camp_name,
                                               f"{_veh_ok} veículo(s) criados via pendentes")
-                                    st.success(f"✅ {_camp_name}: {_veh_ok} veículo(s) criado(s).")
+                                    st.toast(f"{_camp_name}: {_veh_ok} veículo(s) criado(s).", icon="✅")
                                     st.rerun()
                                 except Exception as _be:
                                     st.error(str(_be))
@@ -2953,9 +3062,10 @@ def main() -> None:
                                     pass
                         except Exception as _be:
                             _errors_b.append(f"{_cn}: {_be}")
-                    st.success(
+                    st.toast(
                         f"✅ {_created} campanha(s) criada(s), {_skipped} já existia(m). "
-                        f"{_vehs_created} veículo(s) adicionado(s)."
+                        f"{_vehs_created} veículo(s) adicionado(s).",
+                        icon="✅",
                     )
                     if _errors_b:
                         for _eb in _errors_b:
@@ -2983,6 +3093,7 @@ def main() -> None:
                     _cov_df.style.map(_color_cov, subset=["Cobertura %"]),
                     use_container_width=True, hide_index=True,
                 )
+                _export_buttons(_cov_df, "cobertura_mapeamento", "exp_cov")
             st.divider()
 
         # ── Item 31: toggle mostrar arquivadas ────────────────────────────────
@@ -3010,7 +3121,7 @@ def main() -> None:
                             try:
                                 rename_campaign(cid, new_cname.strip())
                                 log_audit(username, "renomear", "campanha", cname, f"Novo nome: {new_cname.strip()}")
-                                st.success(f"Renomeada para **{new_cname.strip()}**")
+                                st.toast(f"Renomeada para **{new_cname.strip()}**", icon="✅")
                                 st.rerun()
                             except Exception as e:
                                 st.error(f"Erro: {e}")
@@ -3022,47 +3133,17 @@ def main() -> None:
                         archive_campaign(cid, not _is_archived)
                         _verb = "arquivar" if not _is_archived else "desarquivar"
                         log_audit(username, _verb, "campanha", cname)
-                        st.success(f"{'Arquivada' if not _is_archived else 'Desarquivada'}: **{cname}**")
+                        st.toast(f"{'Arquivada' if not _is_archived else 'Desarquivada'}: **{cname}**", icon="🗄")
                         st.rerun()
 
                     # ── Excluir campanha ───────────────────────────────────
                     if st.button("🗑 Excluir campanha", key=f"del_camp_btn_{cid}"):
-                        st.session_state[f"confirm_del_camp_{cid}"] = True
-
-                    if st.session_state.get(f"confirm_del_camp_{cid}"):
-                        st.error(
-                            f"⚠️ Excluir **{cname}** e todos os seus {len(vehs)} veículo(s)? "
-                            "Todos os dados de plano e assets serão perdidos. Não pode ser desfeito."
-                        )
-                        dc1, dc2 = st.columns(2)
-                        if dc1.button("✅ Sim, excluir tudo", key=f"confirm_yes_camp_{cid}", type="primary"):
-                            delete_campaign(cid)
-                            log_audit(username, "excluir", "campanha", cname, f"{len(vehs)} veículo(s) removidos")
-                            st.session_state.pop(f"confirm_del_camp_{cid}", None)
-                            st.rerun()
-                        if dc2.button("❌ Cancelar", key=f"confirm_no_camp_{cid}"):
-                            st.session_state.pop(f"confirm_del_camp_{cid}", None)
-                            st.rerun()
+                        _dlg_del_camp(cid, cname, len(vehs), username)
 
                     # ── Limpar dados da campanha (item 21) ────────────────
                     if st.button("🧹 Limpar todos os dados", key=f"clear_data_btn_{cid}",
                                  help="Remove plano e assets de todos os veículos desta campanha"):
-                        st.session_state[f"confirm_clear_{cid}"] = True
-
-                    if st.session_state.get(f"confirm_clear_{cid}"):
-                        st.warning(
-                            f"⚠️ Isso apagará o plano e os assets de **todos os {len(vehs)} veículo(s)** "
-                            f"de **{cname}**. O histórico (log) será mantido. Não pode ser desfeito."
-                        )
-                        cl1, cl2 = st.columns(2)
-                        if cl1.button("🧹 Sim, limpar dados", type="primary", key=f"confirm_clear_yes_{cid}"):
-                            n = clear_campaign_data(cid)
-                            st.session_state.pop(f"confirm_clear_{cid}", None)
-                            st.success(f"{n} registro(s) removido(s).")
-                            st.rerun()
-                        if cl2.button("❌ Cancelar", key=f"confirm_clear_no_{cid}"):
-                            st.session_state.pop(f"confirm_clear_{cid}", None)
-                            st.rerun()
+                        _dlg_clear_camp(cid, cname, len(vehs))
 
                     # ── Veículos ───────────────────────────────────────────
                     if vehs:
@@ -3080,23 +3161,12 @@ def main() -> None:
                                 if new_vname.strip() and new_vname.strip() != vname:
                                     try:
                                         rename_vehicle(vid, new_vname.strip())
-                                        st.success(f"Veículo renomeado para **{new_vname.strip()}**")
+                                        st.toast(f"Veículo renomeado para **{new_vname.strip()}**", icon="✅")
                                         st.rerun()
                                     except Exception as e:
                                         st.error(f"Erro: {e}")
                             if vc3.button("🗑", key=f"del_veh_btn_{vid}", help="Excluir veículo"):
-                                st.session_state[f"confirm_del_veh_{vid}"] = True
-
-                            if st.session_state.get(f"confirm_del_veh_{vid}"):
-                                st.warning(f"Excluir veículo **{vname}** e seus dados?")
-                                dv1, dv2 = st.columns(2)
-                                if dv1.button("✅ Sim", key=f"confirm_yes_veh_{vid}", type="primary"):
-                                    delete_vehicle(vid)
-                                    st.session_state.pop(f"confirm_del_veh_{vid}", None)
-                                    st.rerun()
-                                if dv2.button("❌ Cancelar", key=f"confirm_no_veh_{vid}"):
-                                    st.session_state.pop(f"confirm_del_veh_{vid}", None)
-                                    st.rerun()
+                                _dlg_del_veh(vid, vname)
 
                             # ── Timestamps (item 11 extra) + Log (item 15) ────
                             _vts = get_ingestion_timestamps(cid, vid)
@@ -3155,21 +3225,7 @@ def main() -> None:
                                         )
                                         _has_blob = _e.get("id") is not None
                                         if _has_blob and _hc2.button("↩", key=f"rb_{_e['id']}", help="Restaurar esta versão"):
-                                            st.session_state[f"confirm_rb_{_e['id']}"] = True
-                                        if st.session_state.get(f"confirm_rb_{_e['id']}"):
-                                            st.warning(f"Restaurar versão de {_ts_str} ({_dtype_lbl}, {_e['row_count']:,} linhas)?")
-                                            _rb1, _rb2 = st.columns(2)
-                                            if _rb1.button("✅ Restaurar", type="primary", key=f"rb_yes_{_e['id']}"):
-                                                try:
-                                                    restore_ingestion_from_log(_e["id"])
-                                                    st.session_state.pop(f"confirm_rb_{_e['id']}", None)
-                                                    st.success("✅ Versão restaurada com sucesso!")
-                                                    st.rerun()
-                                                except Exception as _rb_exc:
-                                                    st.error(str(_rb_exc))
-                                            if _rb2.button("❌ Cancelar", key=f"rb_no_{_e['id']}"):
-                                                st.session_state.pop(f"confirm_rb_{_e['id']}", None)
-                                                st.rerun()
+                                            _dlg_restore(_e)
                                         st.markdown("---")
                     else:
                         st.caption("Sem veículos cadastrados.")
@@ -3210,7 +3266,7 @@ def main() -> None:
                                     else:
                                         save_alert_config(cid, _atype, int(_thr), _email, _enab,
                                                           created_by=username)
-                                    st.success("Alerta salvo!")
+                                    st.toast("Alerta salvo!", icon="🔔")
                                     st.rerun()
                                 if _ae and st.button("🗑 Remover", key=f"al_del_{cid}_{_atype}"):
                                     delete_alert_config(_ae["id"])
@@ -3270,7 +3326,7 @@ def main() -> None:
                 if new_cli.strip():
                     try:
                         add_client(new_cli.strip())
-                        st.success(f"Cliente **{new_cli.strip()}** adicionado.")
+                        st.toast(f"Cliente **{new_cli.strip()}** adicionado.", icon="✅")
                         st.rerun()
                     except Exception:
                         st.error("Erro ao adicionar cliente (pode já existir).")
@@ -3301,28 +3357,16 @@ def main() -> None:
                         st.session_state.pop(f"confirm_del_cli_{c}", None)
 
                     if cc3.button("🗑 Excluir", key=f"del_cli_{c}"):
-                        st.session_state[f"confirm_del_cli_{c}"] = True
                         st.session_state.pop(f"edit_cli_{c}", None)
-
-                    # Confirmação de exclusão
-                    if st.session_state.get(f"confirm_del_cli_{c}"):
-                        st.warning(
-                            f"⚠️ Excluir **{c}**? Isso desvincula {qtd} campanha(s). Não pode ser desfeito."
-                        )
-                        dc1, dc2 = st.columns(2)
-                        if dc1.button("✅ Sim, excluir", key=f"confirm_yes_cli_{c}", type="primary"):
-                            delete_client(c)
-                            st.rerun()
-                        if dc2.button("❌ Cancelar", key=f"confirm_no_cli_{c}"):
-                            st.session_state.pop(f"confirm_del_cli_{c}", None)
-                            st.rerun()
+                        _dlg_del_cli(c, qtd)
 
                     if st.session_state.get(f"edit_cli_{c}", False):
                         rc1, rc2 = st.columns([6, 2])
                         novo_nome = rc1.text_input("Novo nome:", value=c, key=f"new_name_{c}")
-                        if rc2.button("Salvar", key=f"save_ren_{c}"):
+                        if rc2.button("Salvar", type="primary", key=f"save_ren_{c}"):
                             if novo_nome.strip() and novo_nome.strip() != c:
                                 rename_client(c, novo_nome.strip())
+                                st.toast(f"Cliente renomeado para **{novo_nome.strip()}**", icon="✅")
                                 st.rerun()
                 st.markdown("---")
 
@@ -3347,7 +3391,7 @@ def main() -> None:
                 if new_uname.strip() and new_pw.strip():
                     try:
                         add_user(new_uname.strip(), new_pw.strip(), new_role, email=new_email.strip())
-                        st.success(f"Usuário **{new_uname}** criado.")
+                        st.toast(f"Usuário **{new_uname}** criado.", icon="✅")
                         st.rerun()
                     except Exception as e:
                         st.error("Usuário já existe." if "UNIQUE" in str(e) else str(e))
@@ -3395,12 +3439,12 @@ def main() -> None:
                             new_role=new_role_sel if not is_self else None,
                             new_email=new_email_val.strip(),
                         )
-                        st.success("Usuário atualizado.")
+                        st.toast(f"Usuário **{uname}** atualizado.", icon="✅")
                         st.rerun()
                     if bc2.button("🗑 Excluir", key=f"eu_del_{uname}", disabled=is_self,
                                   type="secondary"):
                         delete_user(uname)
-                        st.warning(f"Usuário **{uname}** removido.")
+                        st.toast(f"Usuário **{uname}** removido.", icon="🗑")
                         st.rerun()
 
                 # Clientes permitidos
@@ -3418,7 +3462,7 @@ def main() -> None:
                             )
                             if st.button("Salvar acesso", key=f"eu_cli_save_{uname}"):
                                 set_user_clients(uname, sel_clients)
-                                st.success("Acesso atualizado.")
+                                st.toast("Acesso atualizado.", icon="✅")
                                 st.rerun()
                         else:
                             st.info("Nenhum cliente cadastrado no Gerenciador de Clientes.")
@@ -3470,7 +3514,7 @@ def main() -> None:
                             st.error("E-mail inválido. Use o formato usuario@dominio.com.")
                         else:
                             add_report_recipient(_rr_new_client, _rr_new_email.strip())
-                            st.success(f"✅ Adicionado: {_rr_new_email}")
+                            st.toast(f"Destinatário **{_rr_new_email}** adicionado.", icon="✅")
                             st.rerun()
                     else:
                         st.warning("Informe um e-mail.")
@@ -3488,7 +3532,7 @@ def main() -> None:
             )
             if st.button("💾 Salvar timeout", type="primary", key="save_timeout"):
                 set_system_config("session_timeout_hours", str(_new_timeout))
-                st.success(f"✅ Timeout atualizado para {_new_timeout}h.")
+                st.toast(f"Timeout atualizado para {_new_timeout}h.", icon="🔐")
 
         # ── Item 43: Histórico de logins por usuário ──────────────────────────
         if role == "admin":
@@ -3499,12 +3543,11 @@ def main() -> None:
                 _lh_df = pd.DataFrame(_lh_all)
                 _lh_df["ts"] = pd.to_datetime(_lh_df["ts"]).dt.strftime("%d/%m/%Y %H:%M:%S")
                 _lh_df["resultado"] = _lh_df["success"].map({True: "✅ Sucesso", False: "❌ Falha"})
-                st.dataframe(
-                    _lh_df[["ts", "username", "resultado"]].rename(columns={
-                        "ts": "Data/Hora", "username": "Usuário", "resultado": "Resultado"
-                    }),
-                    use_container_width=True, hide_index=True, height=300,
-                )
+                _lh_display = _lh_df[["ts", "username", "resultado"]].rename(columns={
+                    "ts": "Data/Hora", "username": "Usuário", "resultado": "Resultado"
+                })
+                st.dataframe(_lh_display, use_container_width=True, hide_index=True, height=300)
+                _export_buttons(_lh_display, "historico_logins", "exp_logins")
             else:
                 st.caption("Nenhum login registrado ainda.")
 
