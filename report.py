@@ -354,34 +354,114 @@ def _section(title: str, subtitle: str, rows: pd.DataFrame,
     if count == 0:
         content = "<p style='color:#64748b;font-size:13px;margin:0'>Nenhum item.</p>"
     else:
-        content = _table(rows, cols, days_col)
+        content = _grouped_table(rows, cols, days_col, bg, fg)
 
     return (
         f'<div style="margin:0 0 20px;border-radius:8px;overflow:hidden;'
         f'border:1px solid #e2e8f0">'
-        f'<div style="background:{bg};padding:10px 16px;display:flex;'
+        f'<div style="background:{fg};padding:10px 16px;display:flex;'
         f'align-items:center;justify-content:space-between">'
         f'<div>'
-        f'<span style="font-size:14px;font-weight:700;color:{fg}">{title}</span>'
-        f'<span style="font-size:12px;color:{fg};opacity:.7;margin-left:8px">{subtitle}</span>'
+        f'<span style="font-size:14px;font-weight:700;color:#fff">{title}</span>'
+        f'<span style="font-size:12px;color:#fff;opacity:.75;margin-left:8px">{subtitle}</span>'
         f'</div>'
-        f'<span style="background:{fg};color:white;border-radius:12px;'
-        f'padding:2px 10px;font-size:12px;font-weight:700">{count}</span>'
+        f'<span style="background:rgba(255,255,255,.25);color:#fff;border-radius:12px;'
+        f'padding:2px 10px;font-size:12px;font-weight:700">{count} criativos</span>'
         f'</div>'
-        f'<div style="padding:12px 16px;background:#fff">{content}</div>'
+        f'<div style="padding:0;background:#fff">{content}</div>'
         f'</div>'
     )
 
 
+# Columns shown inside each campaign group (campaign/client are in the group header)
 PLAN_COLS = [
-    ("sys_client",   "Cliente"),
-    ("sys_campaign", "Campanha"),
     ("sys_vehicle",  "Veículo"),
     ("ad_name",      "Criativo"),
     ("format",       "Formato"),
     ("start_date",   "Início"),
     ("end_date",     "Fim"),
 ]
+
+
+def _grouped_table(rows: pd.DataFrame, cols: list[tuple[str, str]],
+                   days_col: bool, header_bg: str, header_fg: str) -> str:
+    """Render rows grouped by sys_campaign, each group has a colored header band."""
+    if rows.empty:
+        return "<p style='color:#64748b;font-size:13px'>Nenhum item.</p>"
+
+    available = [(c, lbl) for c, lbl in cols if c in rows.columns]
+    groups = rows.groupby("sys_campaign", sort=False) if "sys_campaign" in rows.columns \
+             else [("—", rows)]
+
+    th_style = (
+        "text-align:left;padding:5px 10px;font-size:11px;"
+        "color:#64748b;font-weight:600;border-bottom:1px solid #e2e8f0;"
+        "background:#f8fafc"
+    )
+    header_row = "".join(f'<th style="{th_style}">{lbl}</th>' for _, lbl in available)
+    if days_col:
+        header_row += f'<th style="{th_style};text-align:right">Dias</th>'
+
+    html = '<table style="width:100%;border-collapse:collapse">'
+
+    for camp_name, grp in groups:
+        client = grp["sys_client"].iloc[0] if "sys_client" in grp.columns else ""
+        subtitle = f" &nbsp;·&nbsp; {client}" if client else ""
+        count = len(grp)
+
+        # Campaign group header
+        html += (
+            f'<tr><td colspan="{len(available) + (1 if days_col else 0)}" style="padding:0">'
+            f'<div style="background:{header_bg};padding:7px 12px;'
+            f'display:flex;align-items:center;justify-content:space-between;'
+            f'border-top:2px solid {header_fg}33">'
+            f'<span style="font-size:12px;font-weight:700;color:{header_fg}">'
+            f'📢 {camp_name}'
+            f'<span style="font-weight:400;opacity:.75">{subtitle}</span>'
+            f'</span>'
+            f'<span style="background:{header_fg};color:#fff;border-radius:10px;'
+            f'padding:1px 8px;font-size:11px;font-weight:700">{count}</span>'
+            f'</div>'
+            f'</td></tr>'
+        )
+        # Column header (once per group)
+        html += f'<tr>{header_row}</tr>'
+
+        # Data rows
+        for i, (_, row) in enumerate(grp.iterrows()):
+            bg = "#f8fafc" if i % 2 == 0 else "#ffffff"
+            cells = ""
+            for col, _ in available:
+                val = row.get(col, "")
+                if col in ("start_date", "end_date"):
+                    val = _fmt_date(val)
+                else:
+                    val = str(val) if pd.notna(val) else "—"
+                cells += (
+                    f'<td style="padding:5px 10px;font-size:12px;'
+                    f'color:#1e293b;border-bottom:1px solid #f1f5f9">{val}</td>'
+                )
+            if days_col:
+                d = row.get("_dias")
+                if d is None or pd.isna(d):
+                    d_str = "—"
+                else:
+                    d = int(d)
+                    d_str = f"+{d}d" if d >= 0 else f"{d}d"
+                cells += (
+                    f'<td style="padding:5px 10px;font-size:12px;text-align:right;'
+                    f'color:#64748b;border-bottom:1px solid #f1f5f9">{d_str}</td>'
+                )
+            html += f'<tr style="background:{bg}">{cells}</tr>'
+
+        # Spacer between groups
+        html += (
+            f'<tr><td colspan="{len(available) + (1 if days_col else 0)}" '
+            f'style="padding:0;height:8px;background:#f1f5f9"></td></tr>'
+        )
+
+    html += "</table>"
+    return html
 
 
 def _no_data_section(items: list[dict]) -> str:
